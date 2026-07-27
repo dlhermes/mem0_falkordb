@@ -1,14 +1,22 @@
-# mem0 + FalkorDB = Graph-Enhanced Memory Layer
+# mem0 + FalkorDB = 图增强记忆层
 
-> **Fork of [mem0ai/mem0](https://github.com/mem0ai/mem0) v2.0.14** — backporting the `graphs/` module removed since v2.0.0, enabling external graph database integration via [mem0-falkordb](https://github.com/FalkorDB/mem0-falkordb).
+> **基于 [mem0ai/mem0](https://github.com/mem0ai/mem0) v2.0.14 的 Fork** — 回迁了 v2.0.0 起被移除的 `graphs/` 模块，通过 [mem0-falkordb](https://github.com/FalkorDB/mem0-falkordb) 插件恢复外部图数据库集成。
 
-## What This Fork Does
+## 这个 Fork 做了什么
 
-mem0 OSS v2.0.0+ removed external graph database support (Neo4j, Kuzu, Memgraph, Apache AGE, Neptune). The entire `mem0/graphs/` module — interface, factory, configs, tools — was deleted.
+mem0 OSS v2.0.0+ 移除了外部图数据库支持（Neo4j、Kuzu、Memgraph、Apache AGE、Neptune）。整个 `mem0/graphs/` 模块——接口、工厂、配置、工具函数——全被删除。
 
-This fork restores the graph store interface layer while keeping everything else intact from v2.0.14. Also fixes several deployment pain points from the original upstream.
+本 Fork 恢复了图存储接口层，并修复了上游多个部署痛点：
 
-## Architecture
+- **`mem0/graphs/` 模块** — 配置、LLM 工具 Schema、提取提示词、MemoryGraph 存根
+- **`GraphStoreFactory`** — 带 Provider 注册机制的工厂类
+- **`graph_store` 字段** — 添加到 `MemoryConfig`
+- **Memory 图集成** — `add()` 非阻塞图写入、`search()` 合并图关系、`delete()`/`reset()` 清理图数据，同步+异步全覆盖
+- **pgvector 维度自动检测** — 不再硬编码 1536，切换 Embedder 模型自动适配
+- **Provider 配置文件** — 设 `MEM0_CONFIG_PATH=/app/config.json` 即可，不需要调 API
+- **Dockerfile 修复** — 预装 libpq5，开箱即用
+
+## 架构
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -19,42 +27,42 @@ This fork restores the graph store interface layer while keeping everything else
 ┌────────────────────▼────────────────────────────┐
 │              Mem0 SDK v2.0.14 + graphs           │
 │  ┌──────────┐  ┌───────────┐  ┌──────────────┐  │
-│  │ vector   │  │ entity    │  │ graph_store  │  │
-│  │ store    │  │ store     │  │ (restored)   │  │
+│  │ 向量存储  │  │ 实体存储   │  │ 图存储       │  │
+│  │          │  │           │  │ (已恢复)     │  │
 │  └──────────┘  └───────────┘  └──────┬───────┘  │
 │                                      │           │
 │                           GraphStoreFactory     │
 │                           provider_to_class     │
 └──────────────────────────────────┬─────────────┘
-                                   │ plugin registers
+                                   │ 插件注册
 ┌──────────────────────────────────▼─────────────┐
-│           mem0-falkordb plugin                  │
+│           mem0-falkordb 插件                    │
 │  ┌──────────────────────────────────────────┐  │
-│  │  MemoryGraph (775 lines)                  │  │
-│  │  - FalkorDB Cypher (vector index, merge)  │  │
-│  │  - Per-user graph isolation               │  │
-│  │  - Mention counting / entity linking       │  │
+│  │  MemoryGraph (775 行)                     │  │
+│  │  - FalkorDB Cypher（向量索引、实体合并）   │  │
+│  │  - 每用户独立图隔离                        │  │
+│  │  - 引用计数 / 实体链接                     │  │
 │  └──────────────────────────────────────────┘  │
 └──────────────────────┬─────────────────────────┘
                        │
 ┌──────────────────────▼─────────────────────────┐
-│              FalkorDB (graph DB)                │
-│  Real Cypher graphs — traversable, queryable   │
+│              FalkorDB（图数据库）               │
+│  真正的 Cypher 图 — 可遍历、可查询              │
 └────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+## 快速开始
 
-### Server Deployment (Recommended)
+### Server 部署（推荐）
 
-自带的 FastAPI server + Next.js Dashboard，一键部署后打开浏览器就能用。
+自带 FastAPI 后端 + Next.js Dashboard，启动后浏览器直接使用。
 
 ```bash
 git clone https://github.com/dlhermes/mem0_falkordb.git
 cd mem0_falkordb/server
 ```
 
-**Step 1: 创建 Provider 配置文件**
+**第一步：创建 Provider 配置文件**
 
 ```bash
 cat > config.json << 'EOF'
@@ -62,7 +70,7 @@ cat > config.json << 'EOF'
   "llm": {
     "provider": "openai",
     "config": {
-      "api_key": "sk-xxx",
+      "api_key": "sk-你的Key",
       "model": "gpt-4o-mini",
       "temperature": 0.1,
       "max_tokens": 8000
@@ -71,7 +79,7 @@ cat > config.json << 'EOF'
   "embedder": {
     "provider": "openai",
     "config": {
-      "api_key": "sk-xxx",
+      "api_key": "sk-你的Key",
       "model": "text-embedding-3-small"
     }
   }
@@ -79,9 +87,9 @@ cat > config.json << 'EOF'
 EOF
 ```
 
-> **切换 Embedder 模型**: 如果使用 `BAAI/bge-m3`（1024 维），pgvector 会自动检测维度，无需手动改配置。只需在 config.json 中指定 embedder model 即可。
+> 如果使用其他 Embedder 模型（如 `BAAI/bge-m3`，1024 维），pgvector 会自动检测维度，无需手动配置。
 
-完整的 Provider 配置参考（LLM + Embedder + Reranker）：
+完整的三组件配置参考（LLM + Embedder + Reranker）：
 
 ```bash
 cat > config.json << 'EOF'
@@ -89,7 +97,7 @@ cat > config.json << 'EOF'
   "llm": {
     "provider": "openai",
     "config": {
-      "api_key": "sk-xxx",
+      "api_key": "sk-你的Key",
       "model": "deepseek-v4-flash-free",
       "temperature": 0.1,
       "max_tokens": 8000,
@@ -99,7 +107,7 @@ cat > config.json << 'EOF'
   "embedder": {
     "provider": "openai",
     "config": {
-      "api_key": "sk-xxx",
+      "api_key": "sk-你的Key",
       "model": "BAAI/bge-m3",
       "openai_base_url": "https://api.siliconflow.cn/v1"
     }
@@ -108,12 +116,12 @@ cat > config.json << 'EOF'
     "provider": "llm_reranker",
     "config": {
       "model": "BAAI/bge-reranker-v2-m3",
-      "api_key": "sk-xxx",
+      "api_key": "sk-你的Key",
       "llm": {
         "provider": "openai",
         "config": {
           "model": "BAAI/bge-reranker-v2-m3",
-          "api_key": "sk-xxx",
+          "api_key": "sk-你的Key",
           "openai_base_url": "https://api.siliconflow.cn/v1/rerank"
         }
       }
@@ -123,14 +131,13 @@ cat > config.json << 'EOF'
 EOF
 ```
 
-**Step 2: 启动**
+**第二步：启动**
 
 ```bash
-# 创建 .env
 cat > .env << 'EOF'
-POSTGRES_PASSWORD=change-me
-JWT_SECRET=random-string-at-least-32-chars
-DASHBOARD_URL=http://你的IP:3000
+POSTGRES_PASSWORD=改一个密码
+JWT_SECRET=随机字符串至少32位
+DASHBOARD_URL=http://你的服务器IP:3000
 MEM0_CONFIG_PATH=/app/config.json
 AUTH_DISABLED=false
 EOF
@@ -138,9 +145,9 @@ EOF
 docker compose up -d
 ```
 
-> **注意**: `DASHBOARD_URL` 必须用 `http://` 而非 `https://`，否则 Dashboard cookie 在浏览器中会被拒绝。
+> `DASHBOARD_URL` 必须用 `http://`，不能用 `https://`，否则 Dashboard 的 Cookie 会被浏览器拒绝。
 
-**Step 3: 创建 Admin 用户**
+**第三步：创建管理员**
 
 ```bash
 docker exec -it mem0-mem0-1 python3 << 'EOF'
@@ -148,7 +155,7 @@ from passlib.hash import bcrypt
 from sqlalchemy import text
 from db import get_db
 db = next(get_db())
-ph = bcrypt.hash("your-password")
+ph = bcrypt.hash("你的密码")
 db.execute(text(
   "INSERT INTO users (id, name, email, password_hash, role, created_at) "
   "VALUES (gen_random_uuid(), 'Admin', 'admin@example.com', :ph, 'admin', now()) "
@@ -159,13 +166,13 @@ db.close()
 EOF
 ```
 
-**Step 4: 打开 Dashboard**
+**第四步：打开 Dashboard**
 
-浏览器访问 `http://你的IP:3000`，用刚才创建的邮箱和密码登录。无需走注册向导 — admin 用户存在后 `/setup` 自动跳过。
+浏览器访问 `http://你的服务器IP:3000`，用刚才创建的邮箱和密码登录。管理员已存在，无需走注册向导。
 
-### Python SDK Only
+### 仅使用 Python SDK
 
-如果只需要 SDK 不需要 Dashboard：
+如果只需要 SDK，不需要 Dashboard：
 
 ```bash
 git clone https://github.com/dlhermes/mem0_falkordb.git
@@ -179,7 +186,7 @@ docker run -d --rm -p 6379:6379 falkordb/falkordb
 
 ```python
 from mem0_falkordb import register
-register()
+register()  # 必须在 Memory.from_config() 之前调用
 
 from mem0 import Memory
 
@@ -197,31 +204,33 @@ config = {
 }
 
 m = Memory.from_config(config)
-m.add("I love pizza", user_id="alice")
-results = m.search("what does alice like?", user_id="alice")
+m.add("我喜欢披萨", user_id="alice")
+
+# 图关系会通过 FalkorDB 自动创建
+results = m.search("alice 喜欢什么？", user_id="alice")
 ```
 
-> **注意**: 如果在虚拟环境中安装，去掉 `--break-system-packages`。
+> 如果在虚拟环境中安装，去掉 `--break-system-packages` 参数。
 
-## Key Improvements over Upstream
+## 相比上游的改进
 
 | 改动 | 文件 | 说明 |
 |---|---|---|
-| Graph Store 模块恢复 | `mem0/graphs/` | 支持 FalkorDB 图存储（通过 mem0-falkordb 插件） |
-| GraphStoreFactory | `mem0/utils/factory.py` | Provider 注册机制，插件可用 monkey-patch 注册 |
-| Memory 图集成 | `mem0/memory/main.py` | add/search/delete 同步+异步全覆盖 |
-| pgvector 维度自动检测 | `mem0/configs/vector_stores/pgvector.py` | 从 `1536` 硬编码改为自动推断，切 embedder 不用清数据 |
-| Provider 配置文件 | `server/server_state.py` | `MEM0_CONFIG_PATH=/app/config.json` 即可，不用调 API |
-| Dockerfile 修复 | `server/Dockerfile` | 预装 libpq5，构建即可用 |
+| 图存储模块恢复 | `mem0/graphs/` | 支持 FalkorDB 图存储 |
+| GraphStoreFactory | `mem0/utils/factory.py` | Provider 注册机制 |
+| Memory 图集成 | `mem0/memory/main.py` | add/search/delete 全路径覆盖 |
+| pgvector 维度自动检测 | `mem0/configs/vector_stores/pgvector.py` | 不再硬编码 1536 |
+| Provider 配置文件 | `server/server_state.py` | 设环境变量即可，不用调 API |
+| Dockerfile 修复 | `server/Dockerfile` | 预装 libpq5 |
 | CORS 修复 | `server/main.py` | allow_methods + allow_headers 已配置 |
 
-## Requirements
+## 环境要求
 
 - Python 3.10-3.12
-- Docker（FalkorDB + PostgreSQL）
+- Docker（运行 FalkorDB + PostgreSQL）
 - mem0-falkordb ≥ 0.4.1
 - FalkorDB ≥ 1.6.0
 
-## License
+## 许可证
 
-Apache 2.0 — same as upstream [mem0ai/mem0](https://github.com/mem0ai/mem0).
+Apache 2.0 — 与上游 [mem0ai/mem0](https://github.com/mem0ai/mem0) 一致。
