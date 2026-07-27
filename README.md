@@ -51,6 +51,28 @@ mem0 OSS v2.0.0+ 移除了外部图数据库支持（Neo4j、Kuzu、Memgraph、A
 └────────────────────────────────────────────────┘
 ```
 
+## 📖 FalkorDB 图存储集成
+
+> 本 Fork 恢复了 graph_store 接口层，需要配合 [mem0-falkordb](https://github.com/FalkorDB/mem0-falkordb) 插件 + FalkorDB 图数据库使用。
+
+详细的集成配置、Cypher 翻译对照、验证方法请参阅 → **[docs/falkordb-integration.md](docs/falkordb-integration.md)**
+
+简而言之：
+
+```python
+from mem0_falkordb import register
+register()  # ⚠️ 必须在 Memory.from_config() 之前
+
+config = {
+    "graph_store": {
+        "provider": "falkordb",
+        "config": {"host": "localhost", "port": 6379, "database": "mem0"},
+    },
+    # ... llm / embedder / vector_store ...
+}
+m = Memory.from_config(config)
+```
+
 ## 快速开始
 
 ### Server 部署（推荐）
