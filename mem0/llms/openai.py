@@ -40,17 +40,32 @@ class OpenAILLM(LLMBase):
             self.config.model = "gpt-5-mini"
 
         if os.environ.get("OPENROUTER_API_KEY"):  # Use OpenRouter
+            llm_kwargs: dict = {}
+            llm_timeout = os.environ.get("MEM0_LLM_TIMEOUT")
+            if llm_timeout is not None:
+                llm_kwargs["timeout"] = float(llm_timeout)
+            llm_max_retries = os.environ.get("MEM0_LLM_MAX_RETRIES")
+            if llm_max_retries is not None:
+                llm_kwargs["max_retries"] = int(llm_max_retries)
             self.client = OpenAI(
                 api_key=os.environ.get("OPENROUTER_API_KEY"),
                 base_url=self.config.openrouter_base_url
                 or os.getenv("OPENROUTER_API_BASE")
                 or "https://openrouter.ai/api/v1",
+                **llm_kwargs,
             )
         else:
             api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
             base_url = self.config.openai_base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
 
-            self.client = OpenAI(api_key=api_key, base_url=base_url)
+            llm_kwargs = {}
+            llm_timeout = os.environ.get("MEM0_LLM_TIMEOUT")
+            if llm_timeout is not None:
+                llm_kwargs["timeout"] = float(llm_timeout)
+            llm_max_retries = os.environ.get("MEM0_LLM_MAX_RETRIES")
+            if llm_max_retries is not None:
+                llm_kwargs["max_retries"] = int(llm_max_retries)
+            self.client = OpenAI(api_key=api_key, base_url=base_url, **llm_kwargs)
 
     def _parse_response(self, response, tools):
         """

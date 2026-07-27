@@ -16,10 +16,10 @@ def _build_database_url() -> str:
 engine = create_engine(
     _build_database_url(),
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_recycle=3600,
-    pool_timeout=30,
+    pool_size=int(os.environ.get("MEM0_DB_POOL_SIZE", "10")),
+    max_overflow=int(os.environ.get("MEM0_DB_MAX_OVERFLOW", "20")),
+    pool_recycle=int(os.environ.get("MEM0_DB_POOL_RECYCLE", "3600")),
+    pool_timeout=int(os.environ.get("MEM0_DB_POOL_TIMEOUT", "30")),
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)

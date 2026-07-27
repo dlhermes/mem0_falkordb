@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 from contextlib import contextmanager
 from typing import Any, List, Optional
@@ -151,8 +152,8 @@ class PGVector(VectorStoreBase):
         port=None,
         diskann=None,
         hnsw=None,
-        minconn=3,
-        maxconn=10,
+        minconn=int(os.environ.get("MEM0_VECTOR_MINCONN", "3")),
+        maxconn=int(os.environ.get("MEM0_VECTOR_MAXCONN", "10")),
         sslmode=None,
         connection_string=None,
         connection_pool=None,

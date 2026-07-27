@@ -488,7 +488,9 @@ class Memory(MemoryBase):
 
         # Entity store is initialized lazily on first use
         self._entity_store = None
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=int(os.environ.get("MEM0_GRAPH_MAX_WORKERS", "1"))
+        )
 
         if self.config.graph_store.config:
             provider = self.config.graph_store.provider
@@ -2203,7 +2205,9 @@ class AsyncMemory(MemoryBase):
         self.api_version = self.config.version
         self.custom_instructions = self.config.custom_instructions
         self._entity_store = None
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=int(os.environ.get("MEM0_GRAPH_MAX_WORKERS", "1"))
+        )
 
         # Initialize reranker if configured
         self.reranker = None

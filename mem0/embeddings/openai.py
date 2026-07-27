@@ -32,7 +32,14 @@ class OpenAIEmbedding(EmbeddingBase):
                 DeprecationWarning,
             )
 
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        embedder_kwargs = {}
+        embedder_timeout = os.environ.get("MEM0_EMBEDDER_TIMEOUT")
+        if embedder_timeout is not None:
+            embedder_kwargs["timeout"] = float(embedder_timeout)
+        embedder_max_retries = os.environ.get("MEM0_EMBEDDER_MAX_RETRIES")
+        if embedder_max_retries is not None:
+            embedder_kwargs["max_retries"] = int(embedder_max_retries)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, **embedder_kwargs)
 
     def embed(self, text, memory_action: Optional[Literal["add", "search", "update"]] = None):
         """
