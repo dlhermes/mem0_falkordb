@@ -201,7 +201,7 @@ git clone https://github.com/dlhermes/mem0_falkordb.git
 cd mem0_falkordb
 pip install build --break-system-packages
 python3 -m build --wheel
-pip install dist/mem0ai-*.whl --break-system-packages
+pip install dist/mem0_graph-*.whl --break-system-packages
 pip install mem0-falkordb falkordb --break-system-packages
 docker run -d --rm -p 6379:6379 falkordb/falkordb
 ```

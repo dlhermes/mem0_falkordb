@@ -8,11 +8,6 @@ RUN apt-get update && apt-get install -y libpq5 && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install mem0 SDK from local source
-COPY pyproject.toml README.md LICENSE ./
-COPY mem0 ./mem0
-RUN pip install --no-cache-dir -e .
-
 COPY . .
 
 EXPOSE 8000
