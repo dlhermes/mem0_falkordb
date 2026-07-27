@@ -264,11 +264,16 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 | `MEM0_VECTOR_MAXCONN` | `10` | pgvector 最大连接数 |
 | `MEM0_LLM_TIMEOUT` | SDK 默认 | OpenAI 客户端请求超时（秒） |
 | `MEM0_LLM_MAX_RETRIES` | SDK 默认 | OpenAI 客户端最大重试次数 |
+| `MEM0_LLM_TEMPERATURE` | `0.2` | LLM 生成温度 |
+| `MEM0_LLM_MAX_TOKENS` | `2000` | LLM 最大生成 token 数 |
 | `MEM0_EMBEDDER_TIMEOUT` | SDK 默认 | OpenAI Embedding 客户端请求超时（秒） |
 | `MEM0_EMBEDDER_MAX_RETRIES` | SDK 默认 | OpenAI Embedding 客户端最大重试次数 |
+| `MEM0_EMBEDDING_DIMS` | 不设置 | Embedding 向量维度，不设置则自动检测 |
+| `MEM0_EMBEDDING_BATCH_SIZE` | `100` | 批量 Embedding 每次请求最大文本条数 |
 | `MEM0_GRAPH_MAX_WORKERS` | `1` | 图写入线程池最大工作线程数 |
 | `MEM0_RERANK_TIMEOUT` | SDK 默认 | Cohere / ZeroEntropy 客户端请求超时（秒） |
 | `MEM0_RERANK_MAX_RETRIES` | SDK 默认 | Cohere / ZeroEntropy 客户端最大重试次数 |
+| `MEM0_RERANK_REQUEST_DELAY` | `0` | LLMReranker 逐文档调 LLM 时每次请求间隔（秒） |
 
 ## 许可证
 

@@ -66,7 +66,7 @@ class OpenAIEmbedding(EmbeddingBase):
 
         Automatically chunks into batches of 100 to stay within API limits.
         """
-        MAX_BATCH = 100
+        MAX_BATCH = int(os.environ.get("MEM0_EMBEDDING_BATCH_SIZE", "100"))
         texts = [text.replace("\n", " ") for text in texts]
         all_embeddings = []
         for i in range(0, len(texts), MAX_BATCH):

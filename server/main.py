@@ -155,7 +155,12 @@ HISTORY_DB_PATH = os.environ.get("HISTORY_DB_PATH", "/app/history/history.db")
 DEFAULT_LLM_MODEL = os.environ.get("MEM0_DEFAULT_LLM_MODEL", "gpt-4.1-nano-2025-04-14")
 DEFAULT_EMBEDDER_MODEL = os.environ.get("MEM0_DEFAULT_EMBEDDER_MODEL", "text-embedding-3-small")
 
-LLM_CONFIG = {"api_key": OPENAI_API_KEY, "temperature": 0.2, "model": DEFAULT_LLM_MODEL}
+LLM_CONFIG = {
+    "api_key": OPENAI_API_KEY,
+    "temperature": float(os.environ.get("MEM0_LLM_TEMPERATURE", "0.2")),
+    "max_tokens": int(os.environ.get("MEM0_LLM_MAX_TOKENS", "2000")),
+    "model": DEFAULT_LLM_MODEL,
+}
 if OPENAI_BASE_URL:
     LLM_CONFIG["openai_base_url"] = OPENAI_BASE_URL
 
@@ -163,6 +168,9 @@ EMBEDDER_API_KEY = os.environ.get("EMBEDDER_API_KEY", OPENAI_API_KEY)
 EMBEDDER_CONFIG = {"api_key": EMBEDDER_API_KEY, "model": DEFAULT_EMBEDDER_MODEL}
 if EMBEDDER_BASE_URL:
     EMBEDDER_CONFIG["openai_base_url"] = EMBEDDER_BASE_URL
+_embedding_dims = os.environ.get("MEM0_EMBEDDING_DIMS")
+if _embedding_dims is not None:
+    EMBEDDER_CONFIG["embedding_dims"] = int(_embedding_dims)
 
 DEFAULT_CONFIG = {
     "version": "v1.1",

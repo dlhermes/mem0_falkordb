@@ -1,5 +1,7 @@
 import logging
+import os
 import re
+import time
 from typing import Any, Dict, List, Union
 
 from mem0.configs.rerankers.base import BaseRerankerConfig
@@ -75,6 +77,8 @@ class LLMReranker(BaseReranker):
         else:
             self._system_prompt = self._SYSTEM_PROMPT
 
+        self._request_delay = float(os.environ.get("MEM0_RERANK_REQUEST_DELAY", "0"))
+
     _SYSTEM_PROMPT = (
         "You are a relevance scoring assistant. "
         "Given a query and a document, score how relevant the document is to the query.\n\n"
@@ -148,7 +152,10 @@ class LLMReranker(BaseReranker):
                 
                 # Extract score from response
                 score = self._extract_score(response)
-                
+
+                if self._request_delay > 0:
+                    time.sleep(self._request_delay)
+
                 # Create scored document
                 scored_doc = doc.copy()
                 scored_doc['rerank_score'] = score

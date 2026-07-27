@@ -78,6 +78,8 @@ docker compose up -d
 |---|---|---|
 | `MEM0_LLM_TIMEOUT` | SDK 默认 | OpenAI 客户端请求超时（秒） |
 | `MEM0_LLM_MAX_RETRIES` | SDK 默认 | OpenAI 客户端最大重试次数 |
+| `MEM0_LLM_TEMPERATURE` | `0.2` | LLM 生成温度 |
+| `MEM0_LLM_MAX_TOKENS` | `2000` | LLM 最大生成 token 数 |
 
 ### Embedder 客户端
 
@@ -85,6 +87,8 @@ docker compose up -d
 |---|---|---|
 | `MEM0_EMBEDDER_TIMEOUT` | SDK 默认 | OpenAI Embedding 客户端请求超时（秒） |
 | `MEM0_EMBEDDER_MAX_RETRIES` | SDK 默认 | OpenAI Embedding 客户端最大重试次数 |
+| `MEM0_EMBEDDING_DIMS` | 不设置 | Embedding 向量维度，不设置则自动检测 |
+| `MEM0_EMBEDDING_BATCH_SIZE` | `100` | 批量 Embedding 每次请求最大文本条数 |
 
 ### 图存储
 
@@ -98,6 +102,7 @@ docker compose up -d
 |---|---|---|
 | `MEM0_RERANK_TIMEOUT` | SDK 默认 | Cohere / ZeroEntropy 客户端请求超时（秒） |
 | `MEM0_RERANK_MAX_RETRIES` | SDK 默认 | Cohere / ZeroEntropy 客户端最大重试次数 |
+| `MEM0_RERANK_REQUEST_DELAY` | `0` | LLMReranker 逐文档调 LLM 时每次请求间隔（秒），防 RPM 限制 |
 
 示例 `.env` 配置：
 
@@ -105,7 +110,11 @@ docker compose up -d
 MEM0_DB_POOL_SIZE=20
 MEM0_DB_MAX_OVERFLOW=40
 MEM0_LLM_TIMEOUT=120
+MEM0_LLM_TEMPERATURE=0.1
+MEM0_LLM_MAX_TOKENS=8000
+MEM0_EMBEDDING_BATCH_SIZE=50
 MEM0_RERANK_TIMEOUT=60
+MEM0_RERANK_REQUEST_DELAY=0.5
 ```
 
 ### 3. 获取管理员凭据
