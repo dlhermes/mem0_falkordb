@@ -32,7 +32,14 @@ class CohereReranker(BaseReranker):
             raise ValueError("Cohere API key is required. Set COHERE_API_KEY environment variable or pass api_key in config.")
             
         self.model = config.model
-        self.client = cohere.Client(self.api_key)
+        cohere_kwargs = {}
+        rerank_timeout = os.environ.get("MEM0_RERANK_TIMEOUT")
+        if rerank_timeout is not None:
+            cohere_kwargs["timeout"] = float(rerank_timeout)
+        rerank_max_retries = os.environ.get("MEM0_RERANK_MAX_RETRIES")
+        if rerank_max_retries is not None:
+            cohere_kwargs["max_retries"] = int(rerank_max_retries)
+        self.client = cohere.Client(self.api_key, **cohere_kwargs)
         
     def rerank(self, query: str, documents: List[Dict[str, Any]], top_k: int = None) -> List[Dict[str, Any]]:
         """
