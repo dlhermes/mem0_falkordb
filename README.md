@@ -266,6 +266,7 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 | `MEM0_LLM_MAX_RETRIES` | SDK 默认 | OpenAI 客户端最大重试次数 |
 | `MEM0_LLM_TEMPERATURE` | `0.2` | LLM 生成温度 |
 | `MEM0_LLM_MAX_TOKENS` | `2000` | LLM 最大生成 token 数 |
+| `MEM0_LLM_MAX_INPUT_TOKENS` | `0`（不限制） | 单次记忆提取最大输入 token 数，超出自动分块提取并上下文传递 |
 | `MEM0_EMBEDDER_TIMEOUT` | SDK 默认 | OpenAI Embedding 客户端请求超时（秒） |
 | `MEM0_EMBEDDER_MAX_RETRIES` | SDK 默认 | OpenAI Embedding 客户端最大重试次数 |
 | `MEM0_EMBEDDING_DIMS` | 不设置 | Embedding 向量维度，不设置则自动检测 |

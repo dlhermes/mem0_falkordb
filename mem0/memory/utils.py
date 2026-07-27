@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import re
+import time
 from typing import Any, Dict, List
 
 from mem0.configs.prompts import (
@@ -317,4 +318,44 @@ def remove_spaces_from_entities(
         item["destination"] = item["destination"].lower().replace(" ", "_")
         cleaned.append(item)
     return cleaned
+
+
+MAX_ESTIMATE_CACHE_SIZE = 128
+_token_cache: Dict[str, tuple[float, int]] = {}
+_token_cache_hits = 0
+_token_cache_misses = 0
+
+
+def _get_tiktoken_encoder():
+    try:
+        import tiktoken
+        return tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        return None
+
+
+def _estimate_tokens(text: str) -> int:
+    global _token_cache_hits, _token_cache_misses
+
+    now = time.time()
+    entry = _token_cache.get(text)
+    if entry is not None:
+        cached_time, cached_tokens = entry
+        if now - cached_time < 60:
+            _token_cache_hits += 1
+            return cached_tokens
+
+    _token_cache_misses += 1
+    encoder = _get_tiktoken_encoder()
+    if encoder is not None:
+        tokens = len(encoder.encode(text))
+    else:
+        tokens = len(text) // 4
+
+    if len(_token_cache) >= MAX_ESTIMATE_CACHE_SIZE:
+        oldest_key = min(_token_cache, key=lambda k: _token_cache[k][0])
+        del _token_cache[oldest_key]
+    _token_cache[text] = (now, tokens)
+
+    return tokens
 

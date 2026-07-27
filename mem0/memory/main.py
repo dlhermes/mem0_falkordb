@@ -52,6 +52,7 @@ from mem0.memory.setup import mem0_dir, setup_config
 from mem0.memory.storage import SQLiteManager
 from mem0.memory.telemetry import MEM0_TELEMETRY, capture_event
 from mem0.memory.utils import (
+    _estimate_tokens,
     extract_json,
     parse_messages,
     parse_vision_messages,
@@ -131,6 +132,8 @@ _SENSITIVE_SUFFIXES = (
     "_credential",
     "_credentials",
 )
+
+DEFAULT_MAX_INPUT_TOKENS = int(os.environ.get("MEM0_LLM_MAX_INPUT_TOKENS", "0"))
 
 # Entity parameters that must be passed via filters, not top-level kwargs
 ENTITY_PARAMS = frozenset({"user_id", "agent_id", "run_id"})
@@ -923,51 +926,99 @@ class Memory(MemoryBase):
             uuid_mapping[str(idx)] = mem.id
             existing_memories.append({"id": str(idx), "text": mem.payload.get("data", "")})
 
-        # Phase 2: LLM extraction (single call)
+        # Phase 2: LLM extraction (single call or chunked)
         is_agent_scoped = bool(filters.get("agent_id")) and not filters.get("user_id")
         system_prompt = ADDITIVE_EXTRACTION_PROMPT
         if is_agent_scoped:
             system_prompt += AGENT_CONTEXT_SUFFIX
-
         custom_instr = prompt or self.custom_instructions
 
-        user_prompt = generate_additive_extraction_prompt(
-            existing_memories=existing_memories,
-            new_messages=parsed_messages,
-            last_k_messages=last_messages,
-            custom_instructions=custom_instr,
-        )
+        # Estimate total tokens (system_prompt + base sections are shared across chunks)
+        _base_overhead = _estimate_tokens(system_prompt) + 2000  # existing_memories + last_k + date
+        _total_est = _base_overhead + _estimate_tokens(parsed_messages)
 
-        try:
-            response = self.llm.generate_response(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                response_format={"type": "json_object"},
-            )
-        except Exception as e:
-            # Re-raise so callers can implement provider fallback / retry.
-            # The original silent ``return []`` made upstream callers unable to
-            # distinguish "LLM unavailable" (429/5xx/timeout) from "LLM
-            # extracted no facts" -- both surfaced as an empty list.
-            logger.error(f"LLM extraction failed: {e}")
-            raise LLMError(f"LLM extraction failed: {e}") from e
+        if DEFAULT_MAX_INPUT_TOKENS > 0 and _total_est > DEFAULT_MAX_INPUT_TOKENS:
+            # === Chunked extraction ===
+            _per_chunk_limit = max(DEFAULT_MAX_INPUT_TOKENS - _base_overhead, 500)
+            # Split messages into chunks by item count, keeping each chunk under token limit
+            _chunks = []
+            _current = []
+            _current_tokens = 0
+            for _msg in messages:
+                _msg_text = f"{_msg.get('role', '')}: {_msg.get('content', '')}"
+                _msg_tokens = _estimate_tokens(_msg_text)
+                if _current and _current_tokens + _msg_tokens > _per_chunk_limit:
+                    _chunks.append(_current)
+                    _current = []
+                    _current_tokens = 0
+                _current.append(_msg)
+                _current_tokens += _msg_tokens
+            if _current:
+                _chunks.append(_current)
 
-        # Parse response
-        try:
-            response = remove_code_blocks(response)
-            if not response or not response.strip():
-                extracted_memories = []
-            else:
+            accumulated_memories = []
+            for _ci, _chunk in enumerate(_chunks):
+                _chunk_text = parse_messages(_chunk)
+                _chunk_prompt = generate_additive_extraction_prompt(
+                    existing_memories=existing_memories,
+                    recently_extracted_memories=accumulated_memories[-20:] if accumulated_memories else None,
+                    new_messages=_chunk_text,
+                    last_k_messages=last_messages,
+                    custom_instructions=custom_instr,
+                )
                 try:
-                    extracted_memories = json.loads(response, strict=False).get("memory", [])
-                except json.JSONDecodeError:
-                    extracted_json = extract_json(response)
-                    extracted_memories = json.loads(extracted_json, strict=False).get("memory", [])
-        except Exception as e:
-            logger.error(f"Error parsing extraction response: {e}")
-            extracted_memories = []
+                    _resp = self.llm.generate_response(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": _chunk_prompt},
+                        ],
+                        response_format={"type": "json_object"},
+                    )
+                except Exception as e:
+                    logger.error(f"LLM extraction failed on chunk {_ci}: {e}")
+                    raise LLMError(f"LLM extraction failed: {e}") from e
+                _resp = remove_code_blocks(_resp)
+                if _resp and _resp.strip():
+                    try:
+                        _chunk_mems = json.loads(_resp, strict=False).get("memory", [])
+                    except json.JSONDecodeError:
+                        _chunk_mems = json.loads(extract_json(_resp), strict=False).get("memory", [])
+                    accumulated_memories.extend(_chunk_mems)
+                logger.info(f"Chunk {_ci+1}/{len(_chunks)}: extracted {len(accumulated_memories)} memories so far")
+            extracted_memories = accumulated_memories
+        else:
+            # Original single-call path
+            user_prompt = generate_additive_extraction_prompt(
+                existing_memories=existing_memories,
+                new_messages=parsed_messages,
+                last_k_messages=last_messages,
+                custom_instructions=custom_instr,
+            )
+            try:
+                response = self.llm.generate_response(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                )
+            except Exception as e:
+                logger.error(f"LLM extraction failed: {e}")
+                raise LLMError(f"LLM extraction failed: {e}") from e
+
+            try:
+                response = remove_code_blocks(response)
+                if not response or not response.strip():
+                    extracted_memories = []
+                else:
+                    try:
+                        extracted_memories = json.loads(response, strict=False).get("memory", [])
+                    except json.JSONDecodeError:
+                        extracted_json = extract_json(response)
+                        extracted_memories = json.loads(extracted_json, strict=False).get("memory", [])
+            except Exception as e:
+                logger.error(f"Error parsing extraction response: {e}")
+                extracted_memories = []
 
         if not extracted_memories:
             # Save messages even if nothing extracted
@@ -2626,50 +2677,101 @@ class AsyncMemory(MemoryBase):
             uuid_mapping[str(idx)] = mem.id
             existing_memories.append({"id": str(idx), "text": mem.payload.get("data", "")})
 
-        # Phase 2: LLM extraction (single call)
+        # Phase 2: LLM extraction (single call or chunked)
         is_agent_scoped = bool(effective_filters.get("agent_id")) and not effective_filters.get("user_id")
         system_prompt = ADDITIVE_EXTRACTION_PROMPT
         if is_agent_scoped:
             system_prompt += AGENT_CONTEXT_SUFFIX
-
         custom_instr = prompt or self.custom_instructions
 
-        user_prompt = generate_additive_extraction_prompt(
-            existing_memories=existing_memories,
-            new_messages=parsed_messages,
-            last_k_messages=last_messages,
-            custom_instructions=custom_instr,
-        )
+        # Estimate total tokens (system_prompt + base sections are shared across chunks)
+        _base_overhead = _estimate_tokens(system_prompt) + 2000  # existing_memories + last_k + date
+        _total_est = _base_overhead + _estimate_tokens(parsed_messages)
 
-        try:
-            response = await asyncio.to_thread(
-                self.llm.generate_response,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                response_format={"type": "json_object"},
-            )
-        except Exception as e:
-            # Re-raise so callers can implement provider fallback / retry
-            # (see sync counterpart for rationale).
-            logger.error(f"LLM extraction failed (async): {e}")
-            raise LLMError(f"LLM extraction failed: {e}") from e
+        if DEFAULT_MAX_INPUT_TOKENS > 0 and _total_est > DEFAULT_MAX_INPUT_TOKENS:
+            # === Chunked extraction ===
+            _per_chunk_limit = max(DEFAULT_MAX_INPUT_TOKENS - _base_overhead, 500)
+            # Split messages into chunks by item count, keeping each chunk under token limit
+            _chunks = []
+            _current = []
+            _current_tokens = 0
+            for _msg in messages:
+                _msg_text = f"{_msg.get('role', '')}: {_msg.get('content', '')}"
+                _msg_tokens = _estimate_tokens(_msg_text)
+                if _current and _current_tokens + _msg_tokens > _per_chunk_limit:
+                    _chunks.append(_current)
+                    _current = []
+                    _current_tokens = 0
+                _current.append(_msg)
+                _current_tokens += _msg_tokens
+            if _current:
+                _chunks.append(_current)
 
-        # Parse response
-        try:
-            response = remove_code_blocks(response)
-            if not response or not response.strip():
-                extracted_memories = []
-            else:
+            accumulated_memories = []
+            for _ci, _chunk in enumerate(_chunks):
+                _chunk_text = parse_messages(_chunk)
+                _chunk_prompt = generate_additive_extraction_prompt(
+                    existing_memories=existing_memories,
+                    recently_extracted_memories=accumulated_memories[-20:] if accumulated_memories else None,
+                    new_messages=_chunk_text,
+                    last_k_messages=last_messages,
+                    custom_instructions=custom_instr,
+                )
                 try:
-                    extracted_memories = json.loads(response, strict=False).get("memory", [])
-                except json.JSONDecodeError:
-                    extracted_json = extract_json(response)
-                    extracted_memories = json.loads(extracted_json, strict=False).get("memory", [])
-        except Exception as e:
-            logger.error(f"Error parsing extraction response (async): {e}")
-            extracted_memories = []
+                    _resp = await asyncio.to_thread(
+                        self.llm.generate_response,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": _chunk_prompt},
+                        ],
+                        response_format={"type": "json_object"},
+                    )
+                except Exception as e:
+                    logger.error(f"LLM extraction failed on chunk {_ci} (async): {e}")
+                    raise LLMError(f"LLM extraction failed: {e}") from e
+                _resp = remove_code_blocks(_resp)
+                if _resp and _resp.strip():
+                    try:
+                        _chunk_mems = json.loads(_resp, strict=False).get("memory", [])
+                    except json.JSONDecodeError:
+                        _chunk_mems = json.loads(extract_json(_resp), strict=False).get("memory", [])
+                    accumulated_memories.extend(_chunk_mems)
+                logger.info(f"Chunk {_ci+1}/{len(_chunks)}: extracted {len(accumulated_memories)} memories so far")
+            extracted_memories = accumulated_memories
+        else:
+            # Original single-call path
+            user_prompt = generate_additive_extraction_prompt(
+                existing_memories=existing_memories,
+                new_messages=parsed_messages,
+                last_k_messages=last_messages,
+                custom_instructions=custom_instr,
+            )
+            try:
+                response = await asyncio.to_thread(
+                    self.llm.generate_response,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                )
+            except Exception as e:
+                logger.error(f"LLM extraction failed (async): {e}")
+                raise LLMError(f"LLM extraction failed: {e}") from e
+
+            try:
+                response = remove_code_blocks(response)
+                if not response or not response.strip():
+                    extracted_memories = []
+                else:
+                    try:
+                        extracted_memories = json.loads(response, strict=False).get("memory", [])
+                    except json.JSONDecodeError:
+                        extracted_json = extract_json(response)
+                        extracted_memories = json.loads(extracted_json, strict=False).get("memory", [])
+            except Exception as e:
+                logger.error(f"Error parsing extraction response (async): {e}")
+                extracted_memories = []
 
         if not extracted_memories:
             await asyncio.to_thread(self.db.save_messages, messages, session_scope)
