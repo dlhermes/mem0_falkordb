@@ -13,7 +13,14 @@ def _build_database_url() -> str:
     return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{db}"
 
 
-engine = create_engine(_build_database_url(), pool_pre_ping=True)
+engine = create_engine(
+    _build_database_url(),
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=3600,
+    pool_timeout=30,
+)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
