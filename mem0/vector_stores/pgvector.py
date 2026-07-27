@@ -144,13 +144,13 @@ class PGVector(VectorStoreBase):
         self,
         dbname,
         collection_name,
-        embedding_model_dims,
-        user,
-        password,
-        host,
-        port,
-        diskann,
-        hnsw,
+        embedding_model_dims=None,
+        user=None,
+        password=None,
+        host=None,
+        port=None,
+        diskann=None,
+        hnsw=None,
         minconn=1,
         maxconn=5,
         sslmode=None,
@@ -163,7 +163,7 @@ class PGVector(VectorStoreBase):
         Args:
             dbname (str): Database name
             collection_name (str): Collection name
-            embedding_model_dims (int): Dimension of the embedding vector
+            embedding_model_dims (int, optional): Dimension of the embedding vector. Auto-detected from first insert if None.
             user (str): Database user
             password (str): Database password
             host (str, optional): Database host
@@ -209,12 +209,46 @@ class PGVector(VectorStoreBase):
                 # psycopg2 ThreadedConnectionPool
                 self.connection_pool = ConnectionPool(minconn=minconn, maxconn=maxconn, dsn=connection_string)
 
+    def _get_table_vector_dim(self) -> Optional[int]:
+        """Return the vector dimension of the existing table, or None if table doesn't exist."""
+        try:
+            with self._get_cursor() as cur:
+                cur.execute(
+                    sql.SQL("""
+                    SELECT atttypmod
+                    FROM pg_attribute a
+                    JOIN pg_class c ON a.attrelid = c.oid
+                    JOIN pg_namespace n ON c.relnamespace = n.oid
+                    WHERE n.nspname = 'public'
+                      AND c.relname = %s
+                      AND a.attname = 'vector'
+                    """),
+                    (self.collection_name,),
+                )
+                row = cur.fetchone()
+                if row is None or row[0] is None:
+                    return None
+                # pgvector stores typmod as VARHDRSZ(4) + dimension
+                return row[0] - 4
+        except Exception:
+            return None
+
     def _ensure_collection(self):
-        if self._collection_ensured:
+        if self._collection_ensured and self.embedding_model_dims is not None:
             return
         collections = self.list_cols()
         if self.collection_name not in collections:
-            self.create_col()
+            if self.embedding_model_dims is not None:
+                self.create_col()
+            # else: defer table creation to first insert, when dims become known
+        else:
+            existing_dim = self._get_table_vector_dim()
+            if self.embedding_model_dims is not None and existing_dim is not None and existing_dim != self.embedding_model_dims:
+                logger.info(
+                    f"Vector dimension mismatch: table has {existing_dim}, model expects {self.embedding_model_dims}. Rebuilding table."
+                )
+                self.delete_col()
+                self.create_col()
         self._collection_ensured = True
 
     @contextmanager
@@ -255,11 +289,18 @@ class PGVector(VectorStoreBase):
         """Return a safely-quoted SQL identifier for the collection table."""
         return sql.Identifier(self.collection_name)
 
-    def create_col(self) -> None:
+    def create_col(self, vector_size: Optional[int] = None) -> None:
         """
         Create a new collection (table in PostgreSQL).
         Will also initialize vector search index if specified.
+
+        Args:
+            vector_size: Explicit vector dimension. Falls back to self.embedding_model_dims.
         """
+        dims = vector_size if vector_size is not None else self.embedding_model_dims
+        if dims is None:
+            raise ValueError("Cannot create collection: embedding_model_dims is not set and no vector_size provided.")
+        self.embedding_model_dims = dims
         with self._get_cursor(commit=True) as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
             cur.execute(
@@ -269,7 +310,7 @@ class PGVector(VectorStoreBase):
                     vector vector({}),
                     payload JSONB
                 );
-                """).format(self._col(), sql.Literal(self.embedding_model_dims))
+                """).format(self._col(), sql.Literal(dims))
             )
             if self.use_diskann and self.embedding_model_dims < 2000:
                 cur.execute("SELECT * FROM pg_extension WHERE extname = 'vectorscale'")
@@ -305,6 +346,22 @@ class PGVector(VectorStoreBase):
             )
 
     def insert(self, vectors: list[list[float]], payloads=None, ids=None) -> None:
+        if vectors and self.embedding_model_dims is None:
+            inferred_dim = len(vectors[0])
+            existing_dim = self._get_table_vector_dim()
+            if existing_dim is not None and existing_dim != inferred_dim:
+                logger.info(
+                    f"Insert vector dim {inferred_dim} differs from table dim {existing_dim}. Rebuilding table."
+                )
+                self.embedding_model_dims = inferred_dim
+                self.delete_col()
+                self.create_col(vector_size=inferred_dim)
+            elif existing_dim is None:
+                self.embedding_model_dims = inferred_dim
+                self.create_col(vector_size=inferred_dim)
+            else:
+                self.embedding_model_dims = inferred_dim
+
         self._ensure_collection()
         logger.info(f"Inserting {len(vectors)} vectors into collection {self.collection_name}")
         json_payloads = [json.dumps(payload) for payload in payloads]

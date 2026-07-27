@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import threading
 from copy import deepcopy
 from typing import Any, Callable, Dict
@@ -74,27 +73,10 @@ def _merge_config(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, An
     return merged
 
 
-def _load_config_file() -> Dict[str, Any]:
-    path = os.environ.get("MEM0_CONFIG_PATH")
-    if not path:
-        return {}
-    try:
-        with open(path) as f:
-            cfg = json.load(f)
-        logging.info("Loaded config from MEM0_CONFIG_PATH=%s", path)
-        return cfg
-    except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
-        logging.warning("Failed to load MEM0_CONFIG_PATH=%s: %s", path, e)
-        return {}
-
-
 def initialize_state(default_config: Dict[str, Any]) -> None:
     global _current_config, _memory_instance
     with _state_lock:
         _current_config = deepcopy(default_config)
-        file_overrides = _load_config_file()
-        if file_overrides:
-            _current_config = _merge_config(_current_config, file_overrides)
         overrides = _load_overrides()
         if overrides:
             _current_config = _merge_config(_current_config, overrides)
