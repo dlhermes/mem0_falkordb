@@ -171,6 +171,10 @@ docker compose up -d
 
 > `DASHBOARD_URL` 必须用 `http://`，不能用 `https://`，否则 Dashboard 的 Cookie 会被浏览器拒绝。
 
+> 启动后可调整数据库连接池、LLM/Embedder 超时等参数以优化性能，详见 [server/README.md#性能调优](server/README.md#性能调优)。
+
+
+
 **第三步：获取管理员凭据**
 
 Server 容器启动时自动创建管理员。查看日志获取凭据：
@@ -245,6 +249,26 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 - Docker（运行 FalkorDB + PostgreSQL）
 - mem0-falkordb ≥ 0.4.1
 - FalkorDB ≥ 1.6.0
+
+## 性能调优
+
+通过环境变量调优连接池、超时等参数，在 `docker-compose.yaml` 或 `.env` 中设置。详见 [server/README.md#性能调优](server/README.md#性能调优)。
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_DB_POOL_SIZE` | `10` | PostgreSQL 连接池常驻连接数 |
+| `MEM0_DB_MAX_OVERFLOW` | `20` | PostgreSQL 连接池最大临时连接数 |
+| `MEM0_DB_POOL_RECYCLE` | `3600` | 连接最大存活时间（秒） |
+| `MEM0_DB_POOL_TIMEOUT` | `30` | 获取连接超时（秒） |
+| `MEM0_VECTOR_MINCONN` | `3` | pgvector 最小连接数 |
+| `MEM0_VECTOR_MAXCONN` | `10` | pgvector 最大连接数 |
+| `MEM0_LLM_TIMEOUT` | SDK 默认 | OpenAI 客户端请求超时（秒） |
+| `MEM0_LLM_MAX_RETRIES` | SDK 默认 | OpenAI 客户端最大重试次数 |
+| `MEM0_EMBEDDER_TIMEOUT` | SDK 默认 | OpenAI Embedding 客户端请求超时（秒） |
+| `MEM0_EMBEDDER_MAX_RETRIES` | SDK 默认 | OpenAI Embedding 客户端最大重试次数 |
+| `MEM0_GRAPH_MAX_WORKERS` | `1` | 图写入线程池最大工作线程数 |
+| `MEM0_RERANK_TIMEOUT` | SDK 默认 | Cohere / ZeroEntropy 客户端请求超时（秒） |
+| `MEM0_RERANK_MAX_RETRIES` | SDK 默认 | Cohere / ZeroEntropy 客户端最大重试次数 |
 
 ## 许可证
 

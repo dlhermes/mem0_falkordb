@@ -32,12 +32,20 @@ class ZeroEntropyReranker(BaseReranker):
             raise ValueError("Zero Entropy API key is required. Set ZERO_ENTROPY_API_KEY environment variable or pass api_key in config.")
             
         self.model = config.model or "zerank-1"
-        
+
+        ze_kwargs = {}
+        rerank_timeout = os.environ.get("MEM0_RERANK_TIMEOUT")
+        if rerank_timeout is not None:
+            ze_kwargs["timeout"] = float(rerank_timeout)
+        rerank_max_retries = os.environ.get("MEM0_RERANK_MAX_RETRIES")
+        if rerank_max_retries is not None:
+            ze_kwargs["max_retries"] = int(rerank_max_retries)
+
         # Initialize Zero Entropy client
         if self.api_key:
-            self.client = ZeroEntropy(api_key=self.api_key)
+            self.client = ZeroEntropy(api_key=self.api_key, **ze_kwargs)
         else:
-            self.client = ZeroEntropy()  # Will use ZERO_ENTROPY_API_KEY from environment
+            self.client = ZeroEntropy(**ze_kwargs)  # Will use ZERO_ENTROPY_API_KEY from environment
         
     def rerank(self, query: str, documents: List[Dict[str, Any]], top_k: int = None) -> List[Dict[str, Any]]:
         """

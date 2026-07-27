@@ -52,6 +52,62 @@ docker compose up -d
 
 等几秒让 PostgreSQL 和 alembic 完成初始化。
 
+## 性能调优
+
+通过环境变量调优数据库连接池、HTTP 客户端超时等参数。所有变量在 `docker-compose.yaml` 中 mem0 服务的 `environment` 段或 `.env` 文件中设置。
+
+### 数据库连接池（PostgreSQL）
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_DB_POOL_SIZE` | `10` | 连接池常驻连接数 |
+| `MEM0_DB_MAX_OVERFLOW` | `20` | 超出 pool_size 的最大临时连接数 |
+| `MEM0_DB_POOL_RECYCLE` | `3600` | 连接最大存活时间（秒），防止 PostgreSQL 服务端断开闲置连接 |
+| `MEM0_DB_POOL_TIMEOUT` | `30` | 获取连接的超时时间（秒） |
+
+### 向量库连接池（pgvector）
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_VECTOR_MINCONN` | `3` | pgvector 最小连接数 |
+| `MEM0_VECTOR_MAXCONN` | `10` | pgvector 最大连接数 |
+
+### LLM 客户端
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_LLM_TIMEOUT` | SDK 默认 | OpenAI 客户端请求超时（秒） |
+| `MEM0_LLM_MAX_RETRIES` | SDK 默认 | OpenAI 客户端最大重试次数 |
+
+### Embedder 客户端
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_EMBEDDER_TIMEOUT` | SDK 默认 | OpenAI Embedding 客户端请求超时（秒） |
+| `MEM0_EMBEDDER_MAX_RETRIES` | SDK 默认 | OpenAI Embedding 客户端最大重试次数 |
+
+### 图存储
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_GRAPH_MAX_WORKERS` | `1` | 图写入线程池最大工作线程数 |
+
+### 重排序
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_RERANK_TIMEOUT` | SDK 默认 | Cohere / ZeroEntropy 客户端请求超时（秒） |
+| `MEM0_RERANK_MAX_RETRIES` | SDK 默认 | Cohere / ZeroEntropy 客户端最大重试次数 |
+
+示例 `.env` 配置：
+
+```bash
+MEM0_DB_POOL_SIZE=20
+MEM0_DB_MAX_OVERFLOW=40
+MEM0_LLM_TIMEOUT=120
+MEM0_RERANK_TIMEOUT=60
+```
+
 ### 3. 获取管理员凭据
 
 Server 容器启动时**自动创建**管理员账号。查看容器日志：
