@@ -50,8 +50,21 @@ This fork restores the graph store interface layer while keeping everything else
 
 ## Quick Start
 
+PyPI 上的 `mem0ai` 是上游版本（不含 graph store）。必须从源码构建我们的 fork。
+
 ```bash
-pip install mem0ai mem0-falkordb falkordb
+# 1. Clone and build
+git clone https://github.com/dlhermes/mem0_falkordb.git
+cd mem0_falkordb
+pip install build --break-system-packages
+python3 -m build --wheel
+
+# 2. Install local build + FalkorDB plugin
+pip install dist/mem0ai-2.0.14-py3-none-any.whl --break-system-packages
+pip install mem0-falkordb falkordb --break-system-packages
+
+# 3. Start FalkorDB
+docker run -d --rm -p 6379:6379 falkordb/falkordb
 ```
 
 ```python
@@ -83,6 +96,8 @@ m.add("I love pizza", user_id="alice")
 # Graph relationships are created automatically via FalkorDB
 results = m.search("what does alice like?", user_id="alice")
 ```
+
+> **注意**: 如果在虚拟环境中安装，去掉 `--break-system-packages` 参数。
 
 ## Changes from Upstream
 
