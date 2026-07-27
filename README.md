@@ -51,6 +51,8 @@ mem0 OSS v2.0.0+ 移除了外部图数据库支持（Neo4j、Kuzu、Memgraph、A
 └────────────────────────────────────────────────┘
 ```
 
+> **Server 容器启动时自动创建 admin 用户（`admin@mem0.dev` + 随机密码），无需手动注册。查看容器日志即可获取凭据。FalkorDB Web UI 端口为 `3003`。**
+
 ## 📖 FalkorDB 图存储集成
 
 > 本 Fork 恢复了 graph_store 接口层，需要配合 [mem0-falkordb](https://github.com/FalkorDB/mem0-falkordb) 插件 + FalkorDB 图数据库使用。
@@ -159,7 +161,7 @@ EOF
 cat > .env << 'EOF'
 POSTGRES_PASSWORD=改一个密码
 JWT_SECRET=随机字符串至少32位
-DASHBOARD_URL=http://你的服务器IP:3000
+DASHBOARD_URL=http://你的服务器IP:3002
 MEM0_CONFIG_PATH=/app/config.json
 AUTH_DISABLED=false
 EOF
@@ -169,28 +171,19 @@ docker compose up -d
 
 > `DASHBOARD_URL` 必须用 `http://`，不能用 `https://`，否则 Dashboard 的 Cookie 会被浏览器拒绝。
 
-**第三步：创建管理员**
+**第三步：获取管理员凭据**
+
+Server 容器启动时自动创建管理员。查看日志获取凭据：
 
 ```bash
-docker exec -it mem0-mem0-1 python3 << 'EOF'
-from passlib.hash import bcrypt
-from sqlalchemy import text
-from db import get_db
-db = next(get_db())
-ph = bcrypt.hash("你的密码")
-db.execute(text(
-  "INSERT INTO users (id, name, email, password_hash, role, created_at) "
-  "VALUES (gen_random_uuid(), 'Admin', 'admin@example.com', :ph, 'admin', now()) "
-  "ON CONFLICT (email) DO NOTHING"
-), {"ph": ph})
-db.commit()
-db.close()
-EOF
+docker compose logs mem0 | grep -E "(admin|密码)"
 ```
+
+日志中打印 `admin@mem0.dev` 和随机密码。
 
 **第四步：打开 Dashboard**
 
-浏览器访问 `http://你的服务器IP:3000`，用刚才创建的邮箱和密码登录。管理员已存在，无需走注册向导。
+浏览器访问 `http://你的服务器IP:3002`，用日志中打印的凭据登录。无需手动创建管理员。
 
 ### 仅使用 Python SDK
 

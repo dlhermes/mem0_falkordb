@@ -23,3 +23,8 @@ posthog>=3.0,<8.0
 
 # Per-IP rate limiting on auth endpoints
 slowapi>=0.1.9,<1.0
+
+# FalkorDB graph store provider
+mem0-falkordb>=0.4.1
+falkordb>=1.6.0
+rank-bm25>=0.2.0

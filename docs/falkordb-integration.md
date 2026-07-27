@@ -30,7 +30,7 @@
 │  · 真正的属性图数据库（可遍历、可查询）                       │
 │  · 每用户独立图隔离                                          │
 │  · 向量索引（cosine similarity）                              │
-│  · 内置 Web UI（端口 3000）                                   │
+│  · 内置 Web UI（端口 3003）                                   │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -55,6 +55,8 @@ register() 调用时:
 
 ## Server 部署集成
 
+> **启动后自动创建管理员**：Server 容器启动时会自动创建 `admin@mem0.dev` 并生成随机密码，查看容器日志即可获取凭据，无需手动执行创建脚本。Dashboard 访问端口为 `3002`。
+
 ### 1. 修改 docker-compose.yaml
 
 在 `server/docker-compose.yaml` 中添加 FalkorDB 服务：
@@ -64,7 +66,7 @@ register() 调用时:
     image: falkordb/falkordb:latest
     ports:
       - "6379:6379"
-      - "3001:3000"   # FalkorDB Web UI
+      - "3003:3000"   # FalkorDB Web UI
     volumes:
       - falkordb_data:/data
     networks:
@@ -217,7 +219,7 @@ print(graph.query("MATCH (n) RETURN n.name, labels(n)").result_set)
 print(graph.query("MATCH (n)-[r]->(m) RETURN n.name, type(r), m.name").result_set)
 ```
 
-或通过 FalkorDB Web UI 可视化查看：浏览器访问 `http://localhost:3000`（如果在 Docker 中映射了端口）。
+或通过 FalkorDB Web UI 可视化查看：浏览器访问 `http://localhost:3003`（如果在 Docker 中映射了端口）。
 
 ## 常见问题
 

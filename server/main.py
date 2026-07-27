@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import os
+import secrets
+import string
 import time
 from typing import Any, Dict, List, Optional
 
 import telemetry
-from auth import ADMIN_API_KEY, AUTH_DISABLED, JWT_SECRET, require_admin, verify_auth
+from auth import ADMIN_API_KEY, AUTH_DISABLED, JWT_SECRET, hash_password, require_admin, verify_auth
 from db import SessionLocal
 from dotenv import load_dotenv
 from errors import (
@@ -62,6 +64,37 @@ BUNDLED_LLM_PROVIDERS = ("openai", "anthropic", "gemini")
 BUNDLED_EMBEDDER_PROVIDERS = ("openai", "gemini")
 
 
+def _seed_admin_user() -> None:
+    """Create a default admin user if no users exist, logging credentials for the operator."""
+    try:
+        with SessionLocal() as session:
+            if session.scalar(select(func.count(User.id))) > 0:
+                return
+
+            alphabet = string.ascii_letters + string.digits
+            password = "".join(secrets.choice(alphabet) for _ in range(16))
+            user = User(name="admin", email="admin@mem0.dev", password_hash=hash_password(password), role="admin")
+            session.add(user)
+            session.commit()
+    except Exception:
+        logging.exception("Failed to seed admin user")
+        return
+
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "\n%s\n"
+        "  Default admin user created:\n"
+        "    Email:    admin@mem0.dev\n"
+        "    Password: %s\n"
+        "    Dashboard: %s\n"
+        "%s",
+        "=" * 72,
+        password,
+        DASHBOARD_URL,
+        "=" * 72,
+    )
+
+
 def _warn_if_unconfigured() -> None:
     """Pre-auth deployments upgrading into this build will 401 everywhere until
     an admin key or admin user exists. Surface the fix before the support tickets."""
@@ -111,10 +144,25 @@ POSTGRES_USER = os.environ.get("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres")
 POSTGRES_COLLECTION_NAME = os.environ.get("POSTGRES_COLLECTION_NAME", "memories")
 
+FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "falkordb")
+FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6379"))
+FALKORDB_DATABASE = os.environ.get("FALKORDB_DATABASE", "mem0")
+
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL")
+EMBEDDER_BASE_URL = os.environ.get("EMBEDDER_BASE_URL")
 HISTORY_DB_PATH = os.environ.get("HISTORY_DB_PATH", "/app/history/history.db")
 DEFAULT_LLM_MODEL = os.environ.get("MEM0_DEFAULT_LLM_MODEL", "gpt-4.1-nano-2025-04-14")
 DEFAULT_EMBEDDER_MODEL = os.environ.get("MEM0_DEFAULT_EMBEDDER_MODEL", "text-embedding-3-small")
+
+LLM_CONFIG = {"api_key": OPENAI_API_KEY, "temperature": 0.2, "model": DEFAULT_LLM_MODEL}
+if OPENAI_BASE_URL:
+    LLM_CONFIG["openai_base_url"] = OPENAI_BASE_URL
+
+EMBEDDER_API_KEY = os.environ.get("EMBEDDER_API_KEY", OPENAI_API_KEY)
+EMBEDDER_CONFIG = {"api_key": EMBEDDER_API_KEY, "model": DEFAULT_EMBEDDER_MODEL}
+if EMBEDDER_BASE_URL:
+    EMBEDDER_CONFIG["openai_base_url"] = EMBEDDER_BASE_URL
 
 DEFAULT_CONFIG = {
     "version": "v1.1",
@@ -129,12 +177,17 @@ DEFAULT_CONFIG = {
             "collection_name": POSTGRES_COLLECTION_NAME,
         },
     },
-    "llm": {
-        "provider": "openai",
-        "config": {"api_key": OPENAI_API_KEY, "temperature": 0.2, "model": DEFAULT_LLM_MODEL},
-    },
-    "embedder": {"provider": "openai", "config": {"api_key": OPENAI_API_KEY, "model": DEFAULT_EMBEDDER_MODEL}},
+    "llm": {"provider": "openai", "config": LLM_CONFIG},
+    "embedder": {"provider": "openai", "config": EMBEDDER_CONFIG},
     "history_db_path": HISTORY_DB_PATH,
+    "graph_store": {
+        "provider": "falkordb",
+        "config": {
+            "host": FALKORDB_HOST,
+            "port": FALKORDB_PORT,
+            "database": FALKORDB_DATABASE,
+        },
+    },
 }
 
 
@@ -164,6 +217,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _on_startup() -> None:
+    _seed_admin_user()
+
 
 app.include_router(auth_router.router)
 app.include_router(api_keys_router.router)

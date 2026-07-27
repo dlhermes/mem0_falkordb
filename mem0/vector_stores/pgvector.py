@@ -401,6 +401,10 @@ class PGVector(VectorStoreBase):
             list: Search results.
         """
         self._ensure_collection()
+        # When embedding_model_dims is None, table creation is deferred to first
+        # insert().  Return empty results without hitting UndefinedTable.
+        if self._get_table_vector_dim() is None:
+            return []
         filter_conditions, filter_params = _build_filter_conditions(filters)
         filter_clause = sql.SQL("WHERE " + " AND ".join(filter_conditions)) if filter_conditions else sql.SQL("")
 

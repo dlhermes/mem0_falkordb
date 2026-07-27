@@ -8,7 +8,7 @@
 
 ```bash
 cd server
-cp .env.example .env  # 编辑 .env，至少设置 POSTGRES_PASSWORD
+# 无需 .env 文件，配置通过 docker-compose.yaml 环境变量注入即可
 ```
 
 ### 1. 创建 Provider 配置
@@ -31,6 +31,14 @@ cat > config.json << 'EOF'
       "api_key": "sk-你的Key",
       "model": "text-embedding-3-small"
     }
+  },
+  "graph_store": {
+    "provider": "falkordb",
+    "config": {
+      "host": "falkordb",
+      "port": 6379,
+      "database": "mem0"
+    }
   }
 }
 EOF
@@ -44,28 +52,27 @@ docker compose up -d
 
 等几秒让 PostgreSQL 和 alembic 完成初始化。
 
-### 3. 创建管理员
+### 3. 获取管理员凭据
+
+Server 容器启动时**自动创建**管理员账号。查看容器日志：
 
 ```bash
-docker exec -it mem0-mem0-1 python3 << 'EOF'
-from passlib.hash import bcrypt
-from sqlalchemy import text
-from db import get_db
-db = next(get_db())
-ph = bcrypt.hash("你的密码")
-db.execute(text(
-  "INSERT INTO users (id, name, email, password_hash, role, created_at) "
-  "VALUES (gen_random_uuid(), 'Admin', 'admin@example.com', :ph, 'admin', now()) "
-  "ON CONFLICT (email) DO NOTHING"
-), {"ph": ph})
-db.commit()
-db.close()
-EOF
+docker compose logs mem0 | grep -E "(admin|密码)"
 ```
+
+日志中会打印：
+
+```
+👤 Admin user created:
+   Email: admin@mem0.dev
+   Password: <随机生成的密码>
+```
+
+直接用这个邮箱和密码登录，不需要手动创建管理员。
 
 ### 4. 打开 Dashboard
 
-浏览器访问 `http://你的IP:3000`，用 admin 账号登录。不需走注册向导。
+浏览器访问 `http://你的IP:3002`，用日志中的 admin 凭据登录。
 
 ## 管理命令
 
@@ -96,7 +103,7 @@ docker exec -it mem0-mem0-1 python3 /app/scripts/prune_request_logs.py
 
 ## 本地访问地址
 
-- Dashboard: `http://localhost:3000`
+- Dashboard: `http://localhost:3002`
 - API: `http://localhost:8888`
 - OpenAPI 文档: `http://localhost:8888/docs`
 
