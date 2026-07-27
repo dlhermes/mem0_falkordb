@@ -1,276 +1,127 @@
-# Mem0 Self-Hosted Server
+# Mem0 自部署 Server（Fork 版）
 
-Mem0 ships a self-hosted FastAPI server plus a local dashboard. It is secure by default, supports dashboard login and API keys, and exposes OpenAPI docs at `/docs`.
+> 基于 mem0-graph v2.0.14.post1，带 FalkorDB 图存储支持。
 
-> **Upgrading?** The Postgres image changed from the archived `ankane/pgvector:v0.5.1`
-> to the official `pgvector/pgvector:pg17`, and `POSTGRES_PASSWORD` is now a required
-> env var. If you have an existing install, see
-> [Migrating from ankane/pgvector to pgvector/pgvector](#migrating-from-ankanepgvector-to-pgvectorpgvector)
-> before running `docker compose up`.
+本目录包含 FastAPI 后端 + Next.js Dashboard，一键 `docker compose up` 部署。
 
-## Quick Start
-
-### Prerequisites
-
-Copy the example env file and set a Postgres password (required):
+## 快速开始
 
 ```bash
 cd server
-cp .env.example .env
-# Edit .env — at minimum set POSTGRES_PASSWORD and OPENAI_API_KEY
+cp .env.example .env  # 编辑 .env，至少设置 POSTGRES_PASSWORD
 ```
 
-### Agent-first
-
-Run one command; the terminal prints the admin email, password, and first API key.
+### 1. 创建 Provider 配置
 
 ```bash
-cd server
-make bootstrap
+cat > config.json << 'EOF'
+{
+  "llm": {
+    "provider": "openai",
+    "config": {
+      "api_key": "sk-你的Key",
+      "model": "gpt-4o-mini",
+      "temperature": 0.1,
+      "max_tokens": 8000
+    }
+  },
+  "embedder": {
+    "provider": "openai",
+    "config": {
+      "api_key": "sk-你的Key",
+      "model": "text-embedding-3-small"
+    }
+  }
+}
+EOF
 ```
 
-This starts the stack, waits for the API and dashboard to be ready, creates the first admin, and generates the first API key.
-
-> The generated credentials print once in the `=== Ready ===` block. Save the password and API key before closing the terminal — the API key cannot be recovered afterwards.
-
-> `make bootstrap` skips the setup wizard, so the use-case → custom-instructions step doesn't run. To add custom instructions afterwards, `POST /configure` with `{"custom_instructions": "..."}`, or run the Browser-first flow on a fresh install.
-
-You can override the generated credentials:
+### 2. 启动
 
 ```bash
-cd server
-make bootstrap EMAIL=admin@company.com PASSWORD='strong-password' NAME='Admin'
+docker compose up -d
 ```
 
-For machine-readable output:
+等几秒让 PostgreSQL 和 alembic 完成初始化。
+
+### 3. 创建管理员
 
 ```bash
-cd server
-OUTPUT=json make seed
+docker exec -it mem0-mem0-1 python3 << 'EOF'
+from passlib.hash import bcrypt
+from sqlalchemy import text
+from db import get_db
+db = next(get_db())
+ph = bcrypt.hash("你的密码")
+db.execute(text(
+  "INSERT INTO users (id, name, email, password_hash, role, created_at) "
+  "VALUES (gen_random_uuid(), 'Admin', 'admin@example.com', :ph, 'admin', now()) "
+  "ON CONFLICT (email) DO NOTHING"
+), {"ph": ph})
+db.commit()
+db.close()
+EOF
 ```
 
-Teardown:
+### 4. 打开 Dashboard
+
+浏览器访问 `http://你的IP:3000`，用 admin 账号登录。不需走注册向导。
+
+## 管理命令
 
 ```bash
-# Stop the stack
-cd server && make down
+# 查看日志
+docker compose logs -f
 
-# Wipe all data (including the Postgres volume)
-cd server && make clean
-```
-
-### Browser-first
-
-Start the stack and finish setup by walking through the wizard in your browser.
-
-```bash
-cd server
-make up
-```
-
-Then open `http://localhost:3000` and complete the setup wizard.
-
-## Security Defaults
-
-- Dashboard login uses JWTs.
-- Programmatic access uses `X-API-Key`.
-- Auth is enabled by default.
-- `AUTH_DISABLED=true` exists for local development only and should not be used in production.
-
-## Forgotten password
-
-Reset an admin password from the host while the stack is running:
-
-```bash
-cd server
-make reset-admin-password EMAIL=admin@example.com PASSWORD='new-strong-password'
-```
-
-This is the supported recovery path. Anyone with shell access to the host already has full access to the database and secrets, so this command does not expand the attack surface.
-
-## Request log retention
-
-The `request_logs` table is append-only and grows with traffic (~864k rows/day at 10 req/s). Prune it periodically:
-
-```bash
-cd server
-make prune-logs                               # defaults to 30 days
-make prune-logs REQUEST_LOG_RETENTION_DAYS=7  # shorter window
-```
-
-Wire the command into cron or a systemd timer in production. The `created_at` column uses a BRIN index, so range deletes stay cheap even on large tables.
-
-## Local URLs
-
-- Dashboard: `http://localhost:3000`
-- API: `http://localhost:8888`
-- OpenAPI docs: `http://localhost:8888/docs`
-
-## Dashboard
-
-Once logged in, the dashboard exposes:
-
-- **Requests** — live audit log of API calls (method, path, status, latency).
-- **Memories** — browse memories, filter by user ID.
-- **Entities** — list every `user_id`, `agent_id`, and `run_id` that owns memories, with counts. Delete an entity to cascade-delete its memories.
-- **API Keys** — create, label, and revoke per-user keys.
-- **Configuration** — runtime LLM and embedder override. Changes persist to the app database and reapply on restart, layered over the values from your `.env`.
-- **Settings** — account profile and password.
-
-## Telemetry
-
-Enabled by default, matching the Mem0 OSS library. Sends at most two events per install to the same anonymous PostHog project the library uses:
-
-- `admin_registered` — fired when the first admin is created (wizard or direct API call). Properties: email domain, server version, install UUID.
-- `onboarding_completed` — fired when the setup wizard reaches its final success state. Carries the same properties plus the freeform `use_case` the operator entered. API-only bootstraps never emit this event.
-
-Set `MEM0_TELEMETRY=false` to opt out.
-
-## Security headers
-
-The dashboard sets the following response headers on every path (see `server/dashboard/next.config.mjs`):
-
-- `X-Frame-Options: DENY`
-- `Content-Security-Policy: frame-ancestors 'none'`
-- `X-Content-Type-Options: nosniff`
-- `Referrer-Policy: strict-origin-when-cross-origin`
-
-Together these prevent iframe embedding, sniffing of mislabelled MIME types, and cross-origin referrer leaks. Harden further behind your own reverse proxy if needed.
-
-## Migrating from `ankane/pgvector` to `pgvector/pgvector`
-
-The `ankane/pgvector` Docker image is archived and no longer maintained. This release
-replaces it with the official `pgvector/pgvector:pg17` image (PostgreSQL 17, pgvector 0.8.0).
-
-**What changed:**
-
-| | Before | After |
-|---|---|---|
-| Docker image | `ankane/pgvector:v0.5.1` | `pgvector/pgvector:pg17` |
-| PostgreSQL version | 15 | 17 |
-| pgvector version | 0.5.1 | 0.8.0 |
-| Credentials | Hardcoded `postgres`/`postgres` | Driven by `POSTGRES_USER` / `POSTGRES_PASSWORD` env vars |
-
-### Fresh installs (no existing data)
-
-No migration needed. Copy `.env.example` to `.env`, set `POSTGRES_PASSWORD`, and run:
-
-```bash
-cd server
-make up
-```
-
-### Existing installs (preserving data)
-
-PostgreSQL 17 cannot read data files written by PostgreSQL 15 directly.
-You must export your data first, then import it into the new container.
-
-**1. Export your data from the old container**
-
-With the old stack still running:
-
-```bash
-cd server
-
-# Dump all databases (mem0 memories + mem0_app auth/config data)
-docker compose exec -T postgres pg_dumpall -U postgres > mem0_backup.sql
-```
-
-Verify the dump file is non-empty:
-
-```bash
-ls -lh mem0_backup.sql
-```
-
-**2. Stop the old stack and remove the old volume**
-
-```bash
-# Stop containers
+# 停止
 docker compose down
 
-# Remove the old Postgres data volume
+# 清空所有数据（删 PostgreSQL 卷）
 docker compose down -v
 ```
 
-> **Warning:** `docker compose down -v` deletes the `postgres_db` volume permanently.
-> Only run this after you have verified your backup.
-
-**3. Update your `.env`**
-
-The Postgres credentials are no longer hardcoded in `docker-compose.yaml`.
-Add them to your `.env` file (or verify they match your old setup):
+## 重置密码
 
 ```bash
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
-POSTGRES_DB=postgres
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=<your-password>    # required — compose will refuse to start without it
-POSTGRES_COLLECTION_NAME=memories
+docker exec -it mem0-mem0-1 python3 /app/scripts/reset_admin_password.py
 ```
 
-If you previously relied on the hardcoded defaults (`postgres`/`postgres`), set
-`POSTGRES_PASSWORD=postgres` to keep the same credentials.
+## 日志清理
 
-**4. Start only Postgres**
-
-Start **only** the Postgres container first — do not start the mem0 API yet.
-The API runs `alembic upgrade head` on startup, which creates empty tables that
-would conflict with the restore.
+`request_logs` 表只增不减，定期清理：
 
 ```bash
-docker compose up -d postgres
+docker exec -it mem0-mem0-1 python3 /app/scripts/prune_request_logs.py
 ```
 
-Wait for the Postgres healthcheck to pass:
+## 本地访问地址
 
-```bash
-docker compose exec -T postgres pg_isready -q && echo "ready" || echo "not ready"
-```
+- Dashboard: `http://localhost:3000`
+- API: `http://localhost:8888`
+- OpenAPI 文档: `http://localhost:8888/docs`
 
-**5. Restore your data**
+## Dashboard 功能
 
-```bash
-docker compose exec -T postgres psql -U postgres < mem0_backup.sql
-```
+登录后可访问：
 
-You may see notices like `role "postgres" already exists` — these are harmless.
+- **Requests** — API 调用审计日志
+- **Memories** — 浏览和搜索记忆
+- **Entities** — 用户/Agent/会话列表及计数
+- **API Keys** — 创建和管理 API Key
+- **Configuration** — 查看当前 Provider 配置
+- **Settings** — 修改密码和个人信息
 
-> **Important:** You must restore before starting the mem0 API container. The API
-> runs database migrations on startup which create empty tables — restoring after
-> that would fail with duplicate-key errors and lose your API keys and settings.
+## 安全
 
-**6. Start the API**
+- Dashboard 使用 JWT 登录
+- API 使用 `X-API-Key` 头鉴权
+- Auth 默认开启，本地开发可设 `AUTH_DISABLED=true`
+- Dashboard 自动设置 `X-Frame-Options: DENY`、`CSP: frame-ancestors 'none'` 等安全头
 
-Now start the mem0 API container. Alembic will detect the existing tables and
-only apply any new migrations:
+## 遥测
 
-```bash
-docker compose up -d mem0
-```
+默认开启（与 mem0 OSS 一致），发送至匿名 PostHog。设 `MEM0_TELEMETRY=false` 可关闭。
 
-**7. Verify**
+## 参考
 
-```bash
-# Check the API is healthy
-make health
-
-# Confirm your memories are present
-curl -s http://localhost:8888/memories?user_id=<your-user-id> -H "X-API-Key: <your-api-key>"
-```
-
-### Rollback
-
-If you need to revert, restore the old image tag in `docker-compose.yaml`:
-
-```yaml
-postgres:
-    image: ankane/pgvector:v0.5.1
-```
-
-Then `docker compose down -v`, `docker compose up -d --build`, and restore from
-`mem0_backup.sql` into the old container the same way.
-
-## Reference
-
-Additional product and API documentation lives at [docs.mem0.ai](https://docs.mem0.ai/open-source/overview).
+更多文档见 [docs.mem0.ai](https://docs.mem0.ai/open-source/overview) 和项目根目录 [README.md](../README.md)。
