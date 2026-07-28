@@ -26,7 +26,7 @@ cp .env.example .env
 {
   "llm":         { "provider": "openai", "config": { "model": "...", "api_key": "sk-你的Key", "openai_base_url": "" } },
   "embedder":    { "provider": "openai", "config": { "model": "...", "api_key": "sk-你的Key", "openai_base_url": "", "embedding_dims": 1536 } },
-  "reranker":    { "provider": "llm_reranker", "config": { "model": "...", "api_key": "sk-你的Key", "llm": {...} } },
+  "reranker":    { "provider": "siliconflow", "config": { "model": "BAAI/bge-reranker-v2-m3", "api_key": "sk-你的Key" } },
   "graph_store": { "provider": "falkordb", "config": { "host": "falkordb", "port": 6379, "database": "mem0" } }
 }
 ```
@@ -83,7 +83,7 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 "
 ```
 
-> `vector(1024)` 的维度需与 Embedder 模型输出一致。Bvoyage-4-large = 1024，text-embedding-3-small = 1536。
+> `vector(1024)` 的维度需与 Embedder 模型输出一致。voyage-4-large = 1024，text-embedding-3-small = 1536。
 
 **预防**：已在 `init-db.sh` 中预建表（Docker 首次初始化时自动执行）。若需手动修复，可走上方 SQL。
 
@@ -163,11 +163,29 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 
 ### 10. Reranker 提供器选择
 
-**现象**：使用 `cohere` provider 对接 SiliconFlow 原生 rerank API 时返回 400 `Input should be a valid integer`。
+**现象**：搜索时未对结果重排序，相关度不够精准。
 
-**根因**：Cohere Python SDK v5 的参数格式与 SiliconFlow 的 Cohere 兼容 API 不完全一致（`top_n` / `max_chunks_per_doc` 等参数被拒绝）。
+**说明**：本 Fork 支持两种 reranker 方案：
 
-**方案 A**（推荐）：用 `llm_reranker`，通过 LiteLLM 等网关调用 chat 模型做相关性打分。兼容任何 OpenAI-compatible 模型。
+**方案 A**（推荐 — SiliconFlow 原生 reranker）：
+
+配置最简单，直接 HTTP 调用 SiliconFlow `/v1/rerank`，无需第三方 SDK。
+
+```json
+{
+  "reranker": {
+    "provider": "siliconflow",
+    "config": {
+      "model": "BAAI/bge-reranker-v2-m3",
+      "api_key": "sk-你的Key"
+    }
+  }
+}
+```
+
+支持通过环境变量调优超时（`MEM0_RERANK_TIMEOUT`，默认 `60`）和重试次数（`MEM0_RERANK_MAX_RETRIES`）。
+
+**方案 B**（备选）：用 `llm_reranker`，通过兼容 OpenAI 的网关调用 chat 模型做相关性打分。兼容任何 OpenAI-compatible 模型。
 
 ```json
 {
@@ -189,7 +207,7 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 }
 ```
 
-**方案 B**：直连 SiliconFlow，需调试 Cohere SDK 参数兼容性（留待后续）。
+同时保留上游全部 Provider：Zero Entropy、Cohere、Sentence Transformer、HuggingFace、LLM-based。详见 [docs.mem0.ai](https://docs.mem0.ai/open-source/overview)。
 
 ## 性能调优
 
@@ -240,7 +258,7 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `MEM0_RERANK_TIMEOUT` | SDK 默认 | Cohere / ZeroEntropy 客户端请求超时（秒） |
+| `MEM0_RERANK_TIMEOUT` | `60` | SiliconFlow/Cohere/ZeroEntropy 客户端请求超时（秒） |
 | `MEM0_RERANK_MAX_RETRIES` | SDK 默认 | Cohere / ZeroEntropy 客户端最大重试次数 |
 | `MEM0_RERANK_REQUEST_DELAY` | `0` | LLMReranker 逐文档调 LLM 时每次请求间隔（秒），防 RPM 限制 |
 
