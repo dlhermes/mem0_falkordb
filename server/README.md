@@ -258,6 +258,17 @@ MEM0_RERANK_TIMEOUT=60
 MEM0_RERANK_REQUEST_DELAY=0.5
 ```
 
+> ⚠️ **修改 `.env` 后，必须重建容器才能生效。** `docker compose restart` 不会重新读取 `env_file:` —— 容器的环境变量在创建时固化。
+>
+> 正确操作：
+>
+> ```bash
+> # 只重建 mem0 容器（不碰 postgres/falkordb/dashboard）
+> docker compose up -d --force-recreate mem0
+> ```
+>
+> 也可以用 `docker compose up -d`（Compose 自动检测 `.env` 变化后重建）。
+
 ### 3. 获取管理员凭据
 
 Server 容器启动时**自动创建**管理员账号。查看容器日志：
