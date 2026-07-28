@@ -127,7 +127,7 @@ register()
 
 ```bash
 # 1. 安装本 Fork 的 mem0
-pip install dist/mem0ai-*.whl --break-system-packages
+pip install dist/mem0_graph-*.whl --break-system-packages
 
 # 2. 安装插件和 FalkorDB 客户端
 pip install mem0-falkordb falkordb --break-system-packages
@@ -229,7 +229,7 @@ print(graph.query("MATCH (n)-[r]->(m) RETURN n.name, type(r), m.name").result_se
 
 ### 安装后 import 报错 "No module named mem0.graphs"
 
-说明 pip 装的是上游 mem0ai（不含 graphs 模块）。需要用本 Fork 的 wheel 安装：`pip install dist/mem0ai-*.whl` 而非 `pip install mem0ai`。
+说明 pip 装的是上游 mem0ai（不含 graphs 模块）。需要用本 Fork 的 wheel 安装：`pip install dist/mem0_graph-*.whl` 而非 `pip install mem0ai`。
 
 ### FalkorDB 连接失败
 

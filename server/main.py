@@ -271,6 +271,7 @@ class SearchRequest(BaseModel):
     threshold: Optional[float] = Field(None, description="Minimum similarity score for results.")
     explain: Optional[bool] = Field(None, description="Include score details for each search result.")
     show_expired: Optional[bool] = Field(None, description="Include expired memories.")
+    rerank: Optional[bool] = Field(None, description="Whether to rerank results with a configured reranker. Defaults to True when reranker is configured.")
 
 
 class GenerateInstructionsRequest(BaseModel):
@@ -541,7 +542,13 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
             params["explain"] = search_req.explain
         if search_req.show_expired is not None:
             params["show_expired"] = search_req.show_expired
-        return get_memory_instance().search(query=search_req.query, filters=filters, **params)
+        # Reranking: explicitly set by caller, or auto-enable when reranker is configured
+        memory = get_memory_instance()
+        if search_req.rerank is not None:
+            params["rerank"] = search_req.rerank
+        elif memory.reranker is not None:
+            params["rerank"] = True
+        return memory.search(query=search_req.query, filters=filters, **params)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:

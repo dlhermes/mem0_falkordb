@@ -184,6 +184,13 @@ notebooks/*.yaml
 # cache db
 *.db
 
+# dev artifact extensions
+*.bak
+*.tmp
+*~
+*.swp
+*.orig
+
 # local directories for testing
 eval/
 qdrant_storage/

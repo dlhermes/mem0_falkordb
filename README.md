@@ -2,19 +2,31 @@
 
 > **基于 [mem0ai/mem0](https://github.com/mem0ai/mem0) v2.0.14 的 Fork** — 回迁了 v2.0.0 起被移除的 `graphs/` 模块，通过 [mem0-falkordb](https://github.com/FalkorDB/mem0-falkordb) 插件恢复外部图数据库集成。
 
-## 这个 Fork 做了什么
+## 为什么需要这个 Fork
 
-mem0 OSS v2.0.0+ 移除了外部图数据库支持（Neo4j、Kuzu、Memgraph、Apache AGE、Neptune）。整个 `mem0/graphs/` 模块——接口、工厂、配置、工具函数——全被删除。
+### 上游做了什么
 
-本 Fork 恢复了图存储接口层，并修复了上游多个部署痛点：
+mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块——接口定义、工厂类、Provider 注册机制、LLM 工具 Schema、实体提取提示词——连同 Neo4j、Kuzu、Memgraph、Apache AGE、Neptune 等图存储后端全部删除。
 
-- **`mem0/graphs/` 模块** — 配置、LLM 工具 Schema、提取提示词、MemoryGraph 存根
-- **`GraphStoreFactory`** — 带 Provider 注册机制的工厂类
-- **`graph_store` 字段** — 添加到 `MemoryConfig`
-- **Memory 图集成** — `add()` 非阻塞图写入、`search()` 合并图关系、`delete()`/`reset()` 清理图数据，同步+异步全覆盖
-- **pgvector 维度自动检测** — 不再硬编码 1536，切换 Embedder 模型自动适配
-- **Provider 配置文件** — 设 `MEM0_CONFIG_PATH=/app/config.json` 即可，不需要调 API
-- **Dockerfile 修复** — 预装 libpq5，开箱即用
+**后果**：自 v2.0.0 起，开源用户无法在 mem0 中使用任何外部图数据库。实体关系、知识图谱、实体链接等功能仅限云端 Platform 版。
+
+### 本 Fork 解决了什么
+
+我们恢复了图存储接口层，并在此基础上修复了上游的多个部署痛点：
+
+| 维度 | 上游 mem0 v2.0.14 | 本 Fork |
+|------|------------------|---------|
+| **图存储** | ❌ 已删除整个 `graphs/` 模块 | ✅ 完整恢复，含配置、工厂、LLM schema、实体提取 |
+| **图数据库后端** | ❌ 无 | ✅ FalkorDB（775 行 Cypher 翻译 + 向量索引） |
+| **实体关系** | ❌ 独立实体无连接 | ✅ 实体节点 + 关系边 + 引用计数 + 跨用户隔离 |
+| **搜索增强** | 纯向量 + BM25 | ✅ 向量 + BM25 + 图关系合并（`search()` 附带实体关系） |
+| **pgvector 维度** | 硬编码 1536 | ✅ 自动检测（切换 Embedder 模型自适应） |
+| **Provider 配置** | 需调 `/configure` API | ✅ `MEM0_CONFIG_PATH=/app/config.json` 即可 |
+| **生产部署** | 需手动注册 admin | ✅ 启动自动创建 admin@mem0.dev |
+| **性能调优** | 硬编码或不可配 | ✅ 18 个环境变量全覆盖（连接池/HTTP超时/批量/并发） |
+| **Docker 开箱** | 依赖手动安装系统包 | ✅ Dockerfile 预装 libpq5 |
+| **长消息内存** | 超长消息一次性传入 | ✅ `MEM0_LLM_MAX_INPUT_TOKENS` 自动分块提取 |
+| **Reranker 重排序** | SDK 有、Server API 未启用 | ✅ Server `/search` API 支持 rerank 参数，配置后自动生效 |
 
 ## 架构
 
@@ -174,7 +186,6 @@ docker compose up -d
 > 启动后可调整数据库连接池、LLM/Embedder 超时等参数以优化性能，详见 [server/README.md#性能调优](server/README.md#性能调优)。
 
 
-
 **第三步：获取管理员凭据**
 
 Server 容器启动时自动创建管理员。查看日志获取凭据：
@@ -233,15 +244,87 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 
 ## 相比上游的改进
 
-| 改动 | 文件 | 说明 |
-|---|---|---|
-| 图存储模块恢复 | `mem0/graphs/` | 支持 FalkorDB 图存储 |
-| GraphStoreFactory | `mem0/utils/factory.py` | Provider 注册机制 |
-| Memory 图集成 | `mem0/memory/main.py` | add/search/delete 全路径覆盖 |
-| pgvector 维度自动检测 | `mem0/configs/vector_stores/pgvector.py` | 不再硬编码 1536 |
-| Provider 配置文件 | `server/server_state.py` | 设环境变量即可，不用调 API |
-| Dockerfile 修复 | `server/Dockerfile` | 预装 libpq5 |
-| CORS 修复 | `server/main.py` | allow_methods + allow_headers 已配置 |
+### 图存储恢复（最核心）
+
+上游 v2.0.0 整个删除了 `mem0/graphs/` 模块——接口定义、工厂类、LLM 工具 Schema、实体提取提示词全部移除。本 Fork 完整恢复：
+
+| 模块 | 说明 |
+|------|------|
+| `mem0/graphs/` (5 文件) | `__init__`、`configs`（GraphStoreConfig）、`memory`（MemoryGraph 基类）、`tools`（LLM 实体提取 JSON Schema）、`utils`（辅助函数） |
+| `GraphStoreFactory` | 带 Provider 注册机制的工厂类，通过 `provider_to_class` 字典动态加载图存储后端 |
+| `MemoryConfig.graph_store` | 将 `graph_store` 字段添加到顶层配置，支持 `provider` + `config` 子配置 |
+
+**价值**：自 v2.0.0 起，开源用户无法在 mem0 中使用图数据库。本 Fork 恢复了该能力，使实体关系、知识图谱等图增强功能在开源版可用。
+
+### FalkorDB 图数据库集成
+
+通过 [mem0-falkordb](https://github.com/FalkorDB/mem0-falkordb) 插件（775 行），FalkorDB 作为图存储后端接入：
+
+- **Cypher 操作**：`CREATE/MERGE/MATCH` 节点、关系、索引
+- **向量索引**：通过 FalkorDB 的 VSS 扩展实现嵌入向量存储与检索
+- **实体合并**：节点融合逻辑（名称+类型去重）
+- **引用计数**：关系边带 `count` 属性追踪引用频率
+- **每用户独立图隔离**：通过 `user_id` 前缀自动分区
+
+### pgvector 维度自动检测
+
+上游硬编码向量维度为 1536（OpenAI `text-embedding-3-small` 默认值）。本 Fork 修改 `mem0/configs/vector_stores/pgvector.py`，首次建表时通过 `select statement` 探测 Embedder 实际返回维度，自动适配。
+
+**价值**：切换 Embedder 模型（如换成 1024 维的 `BAAI/bge-m3`）无需手动修改数据库 Schema。
+
+### Provider 配置文件
+
+上游 Server 部署后必须通过 `/configure` API 或浏览器 Wizard 来配置 LLM/Embedder Provider。本 Fork 支持 `MEM0_CONFIG_PATH` 环境变量指向 JSON 配置文件，容器启动时自动加载。
+
+**价值**：纯配置文件驱动部署，无需调 API 或跑 Wizard。CI/CD、IaC 等自动化场景直接读取 JSON。
+
+### 自动管理员创建
+
+上游部署后需要手动注册管理员。本 Fork 的 Server 容器启动时自动创建 `admin@mem0.dev` + 随机密码，并在日志中打印凭据。
+
+**价值**：去掉 Wizard 注册步骤，`docker compose up -d` 后直接登录使用。
+
+### 生产级性能调优
+
+上游几乎不可配。本 Fork 暴露 18 个环境变量覆盖全链路：
+
+| 类别 | 变量数 | 覆盖范围 |
+|------|--------|---------|
+| 数据库连接池 | 4 | `POOL_SIZE`、`MAX_OVERFLOW`、`POOL_RECYCLE`、`POOL_TIMEOUT` |
+| LLM HTTP 客户端 | 4 | `TEMPERATURE`、`MAX_TOKENS`、`TIMEOUT`、`MAX_RETRIES` |
+| Embedder HTTP 客户端 | 4 | `DIMS`、`BATCH_SIZE`、`TIMEOUT`、`MAX_RETRIES` |
+| Reranker | 3 | `TIMEOUT`、`MAX_RETRIES`、`REQUEST_DELAY` |
+| 长消息处理 | 1 | `MAX_INPUT_TOKENS`（超出自动分块） |
+| 图处理 | 1 | `MAX_WORKERS`（实体提取并发数） |
+| 向量库连接池 | 2 | `VECTOR_MINCONN`、`VECTOR_MAXCONN` |
+
+详见 [server/README.md#性能调优](server/README.md#性能调优)。
+
+### Docker 生产就绪
+
+上游的 Dockerfile 未预装 PostgreSQL 客户端库，首次构建会因 `psycopg` 编译失败。本 Fork 的 `server/dev.Dockerfile` 预装 `libpq5`，开箱即用。
+
+### Server Reranker 重排序
+
+上游的 Server API 虽然 SDK 层支持 reranker，但 `/search` 端点从未传递 `rerank` 参数——配了也用不上。本 Fork 修复了这个问题：
+
+- `POST /search` 新增 `rerank` 字段（可选布尔值）
+- 显式传 `rerank=true/false` → 按指定执行
+- 不传但 `config.json` 中配置了 reranker → **自动启用**
+- 未配置 reranker → 保持原行为，无额外开销
+
+启用只需在 `config.json` 中加一段：
+
+```json
+{
+  "reranker": {
+    "provider": "zero_entropy",
+    "config": {"model": "zerank-1", "api_key": "sk-你的Key"}
+  }
+}
+```
+
+支持所有上游 Provider：Zero Entropy、Cohere、Sentence Transformer、HuggingFace、LLM-based。详见 [docs.mem0.ai/components/rerankers/config](https://docs.mem0.ai/components/rerankers/config)。
 
 ## 环境要求
 
@@ -249,32 +332,6 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 - Docker（运行 FalkorDB + PostgreSQL）
 - mem0-falkordb ≥ 0.4.1
 - FalkorDB ≥ 1.6.0
-
-## 性能调优
-
-通过环境变量调优连接池、超时等参数，在 `docker-compose.yaml` 或 `.env` 中设置。详见 [server/README.md#性能调优](server/README.md#性能调优)。
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `MEM0_DB_POOL_SIZE` | `10` | PostgreSQL 连接池常驻连接数 |
-| `MEM0_DB_MAX_OVERFLOW` | `20` | PostgreSQL 连接池最大临时连接数 |
-| `MEM0_DB_POOL_RECYCLE` | `3600` | 连接最大存活时间（秒） |
-| `MEM0_DB_POOL_TIMEOUT` | `30` | 获取连接超时（秒） |
-| `MEM0_VECTOR_MINCONN` | `3` | pgvector 最小连接数 |
-| `MEM0_VECTOR_MAXCONN` | `10` | pgvector 最大连接数 |
-| `MEM0_LLM_TIMEOUT` | SDK 默认 | OpenAI 客户端请求超时（秒） |
-| `MEM0_LLM_MAX_RETRIES` | SDK 默认 | OpenAI 客户端最大重试次数 |
-| `MEM0_LLM_TEMPERATURE` | `0.2` | LLM 生成温度 |
-| `MEM0_LLM_MAX_TOKENS` | `2000` | LLM 最大生成 token 数 |
-| `MEM0_LLM_MAX_INPUT_TOKENS` | `0`（不限制） | 单次记忆提取最大输入 token 数，超出自动分块提取并上下文传递 |
-| `MEM0_EMBEDDER_TIMEOUT` | SDK 默认 | OpenAI Embedding 客户端请求超时（秒） |
-| `MEM0_EMBEDDER_MAX_RETRIES` | SDK 默认 | OpenAI Embedding 客户端最大重试次数 |
-| `MEM0_EMBEDDING_DIMS` | 不设置 | Embedding 向量维度，不设置则自动检测 |
-| `MEM0_EMBEDDING_BATCH_SIZE` | `100` | 批量 Embedding 每次请求最大文本条数 |
-| `MEM0_GRAPH_MAX_WORKERS` | `1` | 图写入线程池最大工作线程数 |
-| `MEM0_RERANK_TIMEOUT` | SDK 默认 | Cohere / ZeroEntropy 客户端请求超时（秒） |
-| `MEM0_RERANK_MAX_RETRIES` | SDK 默认 | Cohere / ZeroEntropy 客户端最大重试次数 |
-| `MEM0_RERANK_REQUEST_DELAY` | `0` | LLMReranker 逐文档调 LLM 时每次请求间隔（秒） |
 
 ## 许可证
 
