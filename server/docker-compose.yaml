@@ -16,6 +16,7 @@ services:
     - ./server_state.py:/app/server_state.py:ro
     - ./requirements.txt:/app/requirements.txt:ro
     - ../mem0:/app/mem0:ro
+    - ./config.json:/app/config.json:ro
     - ../pyproject.toml:/app/pyproject.toml:ro
     depends_on:
       postgres:
@@ -28,11 +29,20 @@ services:
     - PYTHONDONTWRITEBYTECODE=1
     - PYTHONUNBUFFERED=1
     - PYTHONPATH=
-    - DASHBOARD_URL=http://10.200.1.163:3002
+    - DASHBOARD_URL=${DASHBOARD_URL:-http://localhost:3002}
     - APP_DB_NAME=mem0_app
     - JWT_SECRET=${JWT_SECRET}
     - AUTH_DISABLED=${AUTH_DISABLED:-false}
     - MEM0_TELEMETRY=${MEM0_TELEMETRY:-true}
+    healthcheck:
+      test:
+      - CMD
+      - python3
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')
+      interval: 10s
+      timeout: 5s
+      retries: 3
   postgres:
     image: pgvector/pgvector:pg17
     restart: on-failure
@@ -61,10 +71,11 @@ services:
     networks:
     - mem0_network
     environment:
-    - NEXT_PUBLIC_API_URL=http://10.200.1.163:8888
+    - NEXT_PUBLIC_API_URL=${API_EXTERNAL_URL:-http://localhost:8888}
     - API_INTERNAL_URL=http://mem0:8000
     - NEXT_PUBLIC_INSTANCE_NAME=Mem0
-    - NODE_ENV=development
+    - NODE_ENV=${NODE_ENV:-development}
+    - DASHBOARD_URL=${DASHBOARD_URL:-http://localhost:3002}
     depends_on:
       mem0:
         condition: service_started
@@ -83,7 +94,7 @@ services:
     - 6379:6379
     - 3003:3000
     volumes:
-    - ./data/falkordb:/data
+    - ./data/falkordb:/var/lib/falkordb/data
     networks:
     - mem0_network
     command:

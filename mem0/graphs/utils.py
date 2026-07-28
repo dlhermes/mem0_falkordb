@@ -34,25 +34,26 @@ Provide a list of update instructions, each specifying the source, target, and t
 
 EXTRACT_RELATIONS_PROMPT = """
 
-You are an advanced algorithm designed to extract structured information from text to construct knowledge graphs. Your goal is to capture comprehensive and accurate information. Follow these key principles:
+你是一个高级算法，设计用于从文本中提取结构化信息以构建知识图谱。你的目标是捕获全面且准确的信息。请遵循以下关键原则：
 
-1. Extract only explicitly stated information from the text.
-2. Establish relationships among the entities provided.
-3. Use "USER_ID" as the source entity for any self-references (e.g., "I," "me," "my," etc.) in user messages.
+1. 仅提取文本中明确陈述的信息。
+2. 在提供的实体之间建立关系。
+3. 对用户消息中的自指代（如"我"、"我的"等），使用 "USER_ID" 作为源实体。
+4. 必须用与输入相同的语言输出所有关系描述。如果输入是中文，关系描述必须用中文。
 CUSTOM_PROMPT
 
-Relationships:
-    - Use consistent, general, and timeless relationship types.
-    - Example: Prefer "professor" over "became_professor."
-    - Relationships should only be established among the entities explicitly mentioned in the user message.
+关系：
+    - 使用一致、通用且不限时态的关系类型。
+    - 示例：优先使用"教授"而非"成为教授"。
+    - 关系应仅在用户消息中明确提及的实体之间建立。
 
-Entity Consistency:
-    - Ensure that relationships are coherent and logically align with the context of the message.
-    - Maintain consistent naming for entities across the extracted data.
+实体一致性：
+    - 确保关系逻辑一致，与消息上下文相符。
+    - 在提取的数据中保持实体命名一致。
 
-Strive to construct a coherent and easily understandable knowledge graph by establishing all the relationships among the entities and adherence to the user’s context.
+努力构建一个连贯且易于理解的知识图谱，通过建立所有实体之间的关系来贴合用户上下文。
 
-Adhere strictly to these guidelines to ensure high-quality knowledge graph extraction."""
+严格遵守这些准则，确保高质量的知识图谱提取。"""
 
 DELETE_RELATIONS_SYSTEM_PROMPT = """
 You are a graph memory manager specializing in identifying, managing, and optimizing relationships within graph-based memories. Your primary task is to analyze a list of existing relationships and determine which ones should be deleted based on the new information provided.

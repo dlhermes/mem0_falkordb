@@ -27,6 +27,10 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **Docker 开箱** | 依赖手动安装系统包 | ✅ Dockerfile 预装 libpq5 |
 | **长消息内存** | 超长消息一次性传入 | ✅ `MEM0_LLM_MAX_INPUT_TOKENS` 自动分块提取 |
 | **Reranker 重排序** | SDK 有、Server API 未启用 | ✅ Server `/search` API 支持 rerank 参数，配置后自动生效 |
+| **中文记忆提取** | 英文 Prompt → 英文事实 | ✅ 全中文 system prompt（记忆+图实体+图关系三链路汉化），`sanitize_relationship_for_cypher` 支持 CJK |
+| **VoyageAI Embedder** | 仅 OpenAI 兼容 | ✅ 自动检测 `voyageai` base_url → `encoding_format: base64` + 跳过 `dimensions` + base64 解码 |
+| **SiliconFlow Reranker** | 无原生支持 | ✅ 新增 `siliconflow` provider，HTTP 直连 `/v1/rerank`，无需 Cohere SDK |
+| **mem0-falkordb 内置** | pip 安装，不兼容中文 Cypher 标签 | ✅ Vendor 到 `mem0/graphs/falkordb/`，entity/relation name 自动 sanitize 为 ASCII |
 
 ## 架构
 
@@ -46,9 +50,9 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 │                           GraphStoreFactory     │
 │                           provider_to_class     │
 └──────────────────────────────────┬─────────────┘
-                                   │ 插件注册
+                                   │ 自动注册
 ┌──────────────────────────────────▼─────────────┐
-│           mem0-falkordb 插件                    │
+│      mem0/graphs/falkordb/ (Vendor 内置)       │
 │  ┌──────────────────────────────────────────┐  │
 │  │  MemoryGraph (775 行)                     │  │
 │  │  - FalkorDB Cypher（向量索引、实体合并）   │  │
@@ -67,15 +71,15 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 
 ## 📖 FalkorDB 图存储集成
 
-> 本 Fork 恢复了 graph_store 接口层，需要配合 [mem0-falkordb](https://github.com/FalkorDB/mem0-falkordb) 插件 + FalkorDB 图数据库使用。
+> 本 Fork 恢复了 graph_store 接口层，FalkorDB 图存储实现已 Vendor 内置在 `mem0/graphs/falkordb/`，无需额外 pip 依赖。
 
 详细的集成配置、Cypher 翻译对照、验证方法请参阅 → **[docs/falkordb-integration.md](docs/falkordb-integration.md)**
 
 简而言之：
 
 ```python
-from mem0_falkordb import register
-register()  # ⚠️ 必须在 Memory.from_config() 之前
+from mem0.graphs.falkordb import register
+register()  # ⚠️ 必须在 Memory.from_config() 之前调用
 
 config = {
     "graph_store": {
@@ -98,86 +102,47 @@ git clone https://github.com/dlhermes/mem0_falkordb.git
 cd mem0_falkordb/server
 ```
 
-**第一步：创建 Provider 配置文件**
+**第一步：创建配置文件**
+
+`config.json` 管理所有模型配置（LLM / Embedder / Reranker / Graph Store）。复制 `server/config.json.example` 并填入你的 API key。示例：
 
 ```bash
-cat > config.json << 'EOF'
-{
-  "llm": {
-    "provider": "openai",
-    "config": {
-      "api_key": "sk-你的Key",
-      "model": "gpt-4o-mini",
-      "temperature": 0.1,
-      "max_tokens": 8000
-    }
-  },
-  "embedder": {
-    "provider": "openai",
-    "config": {
-      "api_key": "sk-你的Key",
-      "model": "text-embedding-3-small"
-    }
-  }
-}
-EOF
+cp server/config.json.example server/config.json
+# 编辑 config.json，替换 sk-你的Key 为真实 key
 ```
 
-> 如果使用其他 Embedder 模型（如 `BAAI/bge-m3`，1024 维），pgvector 会自动检测维度，无需手动配置。
+配置文件结构（详见 `server/config.json.example`）：
 
-完整的三组件配置参考（LLM + Embedder + Reranker）：
-
-```bash
-cat > config.json << 'EOF'
+```json
 {
-  "llm": {
-    "provider": "openai",
-    "config": {
-      "api_key": "sk-你的Key",
-      "model": "deepseek-v4-flash-free",
-      "temperature": 0.1,
-      "max_tokens": 8000,
-      "openai_base_url": "https://opencode.ai/zen/v1"
-    }
-  },
-  "embedder": {
-    "provider": "openai",
-    "config": {
-      "api_key": "sk-你的Key",
-      "model": "BAAI/bge-m3",
-      "openai_base_url": "https://api.siliconflow.cn/v1"
-    }
-  },
-  "reranker": {
-    "provider": "llm_reranker",
-    "config": {
-      "model": "BAAI/bge-reranker-v2-m3",
-      "api_key": "sk-你的Key",
-      "llm": {
-        "provider": "openai",
-        "config": {
-          "model": "BAAI/bge-reranker-v2-m3",
-          "api_key": "sk-你的Key",
-          "openai_base_url": "https://api.siliconflow.cn/v1/rerank"
-        }
-      }
-    }
-  }
+  "llm":         { "provider": "openai", "config": { "model": "...", "api_key": "sk-你的Key", "openai_base_url": "" } },
+  "embedder":    { "provider": "openai", "config": { "model": "...", "api_key": "sk-你的Key", "openai_base_url": "" } },
+  "reranker":    { "provider": "siliconflow", "config": { "model": "BAAI/bge-reranker-v2-m3", "api_key": "sk-你的Key" } },
+  "graph_store": { "provider": "falkordb", "config": { "host": "falkordb", "port": 6379, "database": "mem0" } }
 }
-EOF
 ```
 
-**第二步：启动**
+> ⚠️ LLM 配置的 `openai_base_url` 字段**不是** `api_base`，填错会导致容器启动崩溃。
+
+**第二步：创建环境变量**
+
+复制 `server/.env.example` 并填入基础设施配置（模型配置不要放这里）：
 
 ```bash
-cat > .env << 'EOF'
+cp server/.env.example server/.env
+```
+
+`.env` 只需设置以下内容（其他可用默认值）：
+
+```bash
 POSTGRES_PASSWORD=改一个密码
 JWT_SECRET=随机字符串至少32位
 DASHBOARD_URL=http://你的服务器IP:3002
+API_EXTERNAL_URL=http://你的服务器IP:8888
 MEM0_CONFIG_PATH=/app/config.json
-AUTH_DISABLED=false
-EOF
+```
 
+```bash
 docker compose up -d
 ```
 
@@ -210,12 +175,12 @@ cd mem0_falkordb
 pip install build --break-system-packages
 python3 -m build --wheel
 pip install dist/mem0_graph-*.whl --break-system-packages
-pip install mem0-falkordb falkordb --break-system-packages
+pip install falkordb --break-system-packages
 docker run -d --rm -p 6379:6379 falkordb/falkordb
 ```
 
 ```python
-from mem0_falkordb import register
+from mem0.graphs.falkordb import register
 register()  # 必须在 Memory.from_config() 之前调用
 
 from mem0 import Memory
@@ -300,6 +265,28 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 
 详见 [server/README.md#性能调优](server/README.md#性能调优)。
 
+### 中文记忆全链路汉化
+
+上游的 system prompt 全部英文，中文输入会被 LLM 翻译成英文事实存储。本 Fork 全链路汉化：
+
+| 链路 | Prompt 位置 | 改动 |
+|------|-----------|------|
+| 记忆事实提取 | `mem0/configs/prompts.py` `ADDITIVE_EXTRACTION_PROMPT` | 中文化 + JSON 输出格式保留 |
+| 图实体检测 | `mem0/graphs/falkordb/graph_memory.py` | 中文 system prompt + tool call 指令 |
+| 图关系提取 | `mem0/graphs/utils.py` `EXTRACT_RELATIONS_PROMPT` | 中文化 + 语言强制指令 |
+| Cypher 安全 | `mem0/memory/utils.py` `sanitize_relationship_for_cypher` | CJK 字符 fallback → underscore → 空值兜底 `related_to` |
+| 图标签安全 | `mem0/graphs/falkordb/graph_memory.py` `_add_entities` | entity_type / relationship 自动 ASCII sanitize（FalkorDB 标签仅支持 ASCII）|
+| CJK BM25 分词 | `mem0/graphs/falkordb/graph_memory.py` `_tokenize_cjk` | jieba 词级切分 + 非中文空格切分，BM25 关键词匹配精度提升 |
+
+### VoyageAI Embedding 兼容
+
+VoyageAI API 与 OpenAI 有三处不兼容：`encoding_format` 只接受 `base64`、不支持 `dimensions` 参数、返回 base64 编码向量。`mem0/embeddings/openai.py` 已自动检测 `openai_base_url` 中的 `voyageai` 并适配：
+
+```python
+# 自动检测 → base64 编码 + 跳过 dimensions + struct.unpack 解码
+_is_voyage = "voyageai" in (self.config.openai_base_url or "")
+```
+
 ### Docker 生产就绪
 
 上游的 Dockerfile 未预装 PostgreSQL 客户端库，首次构建会因 `psycopg` 编译失败。本 Fork 的 `server/dev.Dockerfile` 预装 `libpq5`，开箱即用。
@@ -313,25 +300,28 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 - 不传但 `config.json` 中配置了 reranker → **自动启用**
 - 未配置 reranker → 保持原行为，无额外开销
 
-启用只需在 `config.json` 中加一段：
+**新增 SiliconFlow 原生 reranker**（`siliconflow` provider），直接 HTTP 调用 `/v1/rerank`，无需第三方 SDK：
 
 ```json
 {
   "reranker": {
-    "provider": "zero_entropy",
-    "config": {"model": "zerank-1", "api_key": "sk-你的Key"}
+    "provider": "siliconflow",
+    "config": {
+      "model": "BAAI/bge-reranker-v2-m3",
+      "api_key": "sk-你的Key"
+    }
   }
 }
 ```
 
-支持所有上游 Provider：Zero Entropy、Cohere、Sentence Transformer、HuggingFace、LLM-based。详见 [docs.mem0.ai/components/rerankers/config](https://docs.mem0.ai/components/rerankers/config)。
+同时保留上游全部 Provider：Zero Entropy、Cohere、Sentence Transformer、HuggingFace、LLM-based。详见 [server/README.md#10-reranker-提供器选择](server/README.md#10-reranker-提供器选择)。
 
 ## 环境要求
 
 - Python 3.10-3.12
 - Docker（运行 FalkorDB + PostgreSQL）
-- mem0-falkordb ≥ 0.4.1
-- FalkorDB ≥ 1.6.0
+- FalkorDB ≥ 1.6.0（图数据库，Docker 运行）
+- mem0-falkordb 已 Vendor 到 mem0/graphs/falkordb/，无需额外 pip 安装
 
 ## 许可证
 

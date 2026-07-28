@@ -6,43 +6,32 @@
 
 ## 快速开始
 
+### 1. 创建配置文件
+
+复制模板并填入你的 API key：
+
 ```bash
-cd server
-# 无需 .env 文件，配置通过 docker-compose.yaml 环境变量注入即可
+cp config.json.example config.json
+# 编辑 config.json — 替换所有 sk-你的Key 为真实 key
+cp .env.example .env
+# 编辑 .env — 最少设置 POSTGRES_PASSWORD 和 JWT_SECRET
 ```
 
-### 1. 创建 Provider 配置
+> `config.json` 管理模型配置（LLM / Embedder / Reranker）。`.env` 管理基础设施（数据库密码、部署地址等）。
+> 模型 key 请写在 `config.json` 中，不要写在 `.env` 里。
 
-```bash
-cat > config.json << 'EOF'
+配置模板参考 `config.json.example`，结构如下：
+
+```json
 {
-  "llm": {
-    "provider": "openai",
-    "config": {
-      "api_key": "sk-你的Key",
-      "model": "gpt-4o-mini",
-      "temperature": 0.1,
-      "max_tokens": 8000
-    }
-  },
-  "embedder": {
-    "provider": "openai",
-    "config": {
-      "api_key": "sk-你的Key",
-      "model": "text-embedding-3-small"
-    }
-  },
-  "graph_store": {
-    "provider": "falkordb",
-    "config": {
-      "host": "falkordb",
-      "port": 6379,
-      "database": "mem0"
-    }
-  }
+  "llm":         { "provider": "openai", "config": { "model": "...", "api_key": "sk-你的Key", "openai_base_url": "" } },
+  "embedder":    { "provider": "openai", "config": { "model": "...", "api_key": "sk-你的Key", "openai_base_url": "", "embedding_dims": 1536 } },
+  "reranker":    { "provider": "llm_reranker", "config": { "model": "...", "api_key": "sk-你的Key", "llm": {...} } },
+  "graph_store": { "provider": "falkordb", "config": { "host": "falkordb", "port": 6379, "database": "mem0" } }
 }
-EOF
 ```
+
+⚠️ 常见错误：把 `openai_base_url` 写成 `api_base` → 容器启动崩溃。把 `llm` key 写成 `vlm` → 配置被忽略。
 
 ### 2. 启动
 
@@ -51,6 +40,156 @@ docker compose up -d
 ```
 
 等几秒让 PostgreSQL 和 alembic 完成初始化。
+
+## 部署踩坑记录
+
+以下为全新部署到远程服务器时遇到的典型问题及修复方案。
+
+### 1. Dashboard 无法登录（登录后自动跳回）
+
+**现象**：输入邮箱密码后页面刷新，无法进入后台。
+
+**根因**：Dashboard 容器的 `secure` cookie 设置为 `true`（Next.js standalone 构建时 `NODE_ENV` 可能被 bake 为 `production`），而自部署环境通常走 HTTP（无 TLS），浏览器拒绝写入 secure cookie → 登录后 token 丢失 → 跳回登录页。
+
+**修复**：在 dashboard 容器 environment 中设置 `DASHBOARD_URL` 环境变量，代码会自动检测协议——`http://` 时 `secure: false`。
+
+```yaml
+mem0-dashboard:
+  environment:
+    - DASHBOARD_URL=http://你的IP:3002
+```
+
+> 详见源码 `dashboard/src/app/api/auth/refresh/route.ts` → `shouldUseSecureCookie()`。
+
+**预防**：compose 中 `DASHBOARD_URL` 已变量化（`${DASHBOARD_URL:-http://localhost:3002}`），部署时在 `.env` 中填入实际地址即可。
+
+### 2. 新部署后 Dashboard 报 500（memories 表不存在）
+
+**现象**：Dashboard 访问 Memories / Entities 页面报 500，容器日志显示 `UndefinedTable: relation "memories" does not exist`。
+
+**根因**：pgvector 采用懒建表策略——`memories` 表仅在首次调用 `add()` 写入记忆时才通过 `create_col()` 创建。全新部署且从未写入数据时，Dashboard 直接查表 → 500。
+
+**修复**：部署后手动在 PostgreSQL 中建表：
+
+```bash
+docker exec mem0-dev-postgres-1 psql -U postgres -d postgres -c "
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE IF NOT EXISTS memories (
+    id UUID PRIMARY KEY,
+    vector vector(1024),
+    payload JSONB
+);
+CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vector_cosine_ops);
+"
+```
+
+> `vector(1024)` 的维度需与 Embedder 模型输出一致。Bvoyage-4-large = 1024，text-embedding-3-small = 1536。
+
+**预防**：已在 `init-db.sh` 中预建表（Docker 首次初始化时自动执行）。若需手动修复，可走上方 SQL。
+
+### 3. Docker Compose IP 硬编码问题
+
+**现象**：`docker-compose.yaml` 中 Dashboard 的 `NEXT_PUBLIC_API_URL`、`DASHBOARD_URL`、mem0 服务的 `DASHBOARD_URL` 均为硬编码 IP。
+
+**修复**：已变量化，改为 `${VAR:-default}` 语法：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `DASHBOARD_URL` | `http://localhost:3002` | Dashboard 完整 URL |
+| `API_EXTERNAL_URL` | `http://localhost:8888` | API 外部访问地址 |
+| `NODE_ENV` | `development` | Next.js 运行模式 |
+
+部署时在 `server/.env` 中填入实际地址即可。
+
+### 4. pgvector 连接的是默认 postgres 库
+
+**现象**：Dashboard 中无记忆，API 查询返回空，但日志未见报错。
+
+**根因**：`docker-compose.yaml` 中 pgvector 的 `POSTGRES_DB` 未显式设置，Mem0 的 v2.0.x 将向量表创建在默认的 `postgres` 库中（非 `mem0_app`）。Alembic 管理的业务表（users/api_keys/request_logs 等）在 `mem0_app` 库，而向量存储的表在 `postgres` 库——两个库各自独立。
+
+**说明**：这是上游设计，非 bug。了解即可，正常使用不受影响。
+
+### 5. FalkorDB 空图现象
+
+**现象**：部署后 FalkorDB 中已有图 `mem0_alice`，含 telemetry stream，引起疑惑。
+
+**说明**：`mem0-falkordb` 插件在 `register()` 初始化时自动创建了 `mem0_alice` 图（空图，零节点零关系）。这是库自身的初始化行为，类似 PostgreSQL 的 `alembic_version` 表——框架元数据，非用户数据或旧部署残留。
+
+### 6. config.json 挂载缺失
+
+**现象**：旧版 `docker-compose.yaml` 缺少 `config.json` 挂载。
+
+**修复**：已在 mem0 服务 volumes 中添加 `- ./config.json:/app/config.json:ro`。
+
+### 7. config.json 字段名错误导致容器启动崩溃
+
+**现象**：容器日志报 `TypeError: OpenAIConfig.__init__() got an unexpected keyword argument 'api_base'`，容器无法启动。
+
+**根因**：`mem0` 的 `OpenAIConfig` 参数名是 `openai_base_url`，不是 `api_base`（openai v2 客户端用 `openai_base_url`）。配了 `api_base` 会导致 Pydantic model 初始化失败。
+
+**修复**：将 `config.json` 中所有 LLM/Embedder/Reranker config 的 `api_base` 改为 `openai_base_url`。
+
+```json
+// ❌ 错误
+{ "llm": { "config": { "api_base": "http://..." } } }
+// ✅ 正确
+{ "llm": { "config": { "openai_base_url": "http://..." } } }
+```
+
+### 8. LLM 配置写到了 vlm key 下
+
+**现象**：`/configure` API 返回配置中没有 `llm` 段，LLM 回退到 `.env` 的占位符 key。
+
+**根因**：`config.json` 的顶层 key 必须是 `llm`（mem0 识别的标准字段）。写 `vlm` 不会报错但被忽略，`_merge_config` 会将其作为未知 key 合并进配置字典但 `Memory.from_config()` 不使用该 key。
+
+**修复**：确保 `config.json` 中 LLM 配置的 key 是 `"llm"` 而非 `"vlm"`。
+
+### 9. VoyageAI Embedding 兼容性问题
+
+**现象**：使用 VoyageAI 模型（如 `voyage-4-large`）时容器日志报 `BadRequestError: encoding_format: float not accepted` 或 `Argument 'dimensions' is not supported`，写入记忆失败。
+
+**根因**：VoyageAI API 与 OpenAI 有两处不兼容：
+1. `encoding_format` 只接受 `base64`，不接受 `float`；
+2. 不支持 `dimensions` 参数（非 Matryoshka 模型）。
+
+且 VoyageAI 返回 base64 编码的 embedding，pgvector 无法直接识别为 float 数组。
+
+**修复**：`mem0/embeddings/openai.py` 已内置 VoyageAI 兼容逻辑：
+- 根据 `openai_base_url` 自动检测 VoyageAI（含 `voyageai` 字符串）
+- VoyageAI 自动走 `encoding_format: base64` + 跳过 `dimensions`
+- `_decode_embedding()` 自动将 base64 字符串解码为 float 列表
+
+> ⚠️ 模型名必须与 VoyageAI 实际模型名一致（如 `voyage-4-large`，非 `Bvoyage-4-large`）。
+
+### 10. Reranker 提供器选择
+
+**现象**：使用 `cohere` provider 对接 SiliconFlow 原生 rerank API 时返回 400 `Input should be a valid integer`。
+
+**根因**：Cohere Python SDK v5 的参数格式与 SiliconFlow 的 Cohere 兼容 API 不完全一致（`top_n` / `max_chunks_per_doc` 等参数被拒绝）。
+
+**方案 A**（推荐）：用 `llm_reranker`，通过 LiteLLM 等网关调用 chat 模型做相关性打分。兼容任何 OpenAI-compatible 模型。
+
+```json
+{
+  "reranker": {
+    "provider": "llm_reranker",
+    "config": {
+      "model": "你的模型名",
+      "api_key": "sk-你的Key",
+      "llm": {
+        "provider": "openai",
+        "config": {
+          "model": "你的模型名",
+          "api_key": "sk-你的Key",
+          "openai_base_url": "http://你的网关:4000/v1"
+        }
+      }
+    }
+  }
+}
+```
+
+**方案 B**：直连 SiliconFlow，需调试 Cohere SDK 参数兼容性（留待后续）。
 
 ## 性能调优
 

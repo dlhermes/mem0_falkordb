@@ -39,7 +39,11 @@ class CohereReranker(BaseReranker):
         rerank_max_retries = os.environ.get("MEM0_RERANK_MAX_RETRIES")
         if rerank_max_retries is not None:
             cohere_kwargs["max_retries"] = int(rerank_max_retries)
-        self.client = cohere.Client(self.api_key, **cohere_kwargs)
+        self.client = cohere.Client(
+            self.api_key,
+            base_url=getattr(self.config, 'cohere_base_url', None) or os.getenv("COHERE_BASE_URL"),
+            **cohere_kwargs
+        )
         
     def rerank(self, query: str, documents: List[Dict[str, Any]], top_k: int = None) -> List[Dict[str, Any]]:
         """

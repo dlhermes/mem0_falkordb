@@ -41,7 +41,7 @@ mem0-falkordb 通过 Python 运行时 monkey-patch 注册自身，**不修改 me
 ```
 register() 调用时:
   1. patch.py 修改 GraphStoreFactory.provider_to_class
-     → 添加 "falkordb": "mem0_falkordb.graph_memory.MemoryGraph"
+     → 添加 "falkordb": "mem0.graphs.falkordb.graph_memory.MemoryGraph"
 
   2. patch.py 修改 GraphStoreConfig 的 Pydantic validator
      → 让 Union 类型接受 FalkorDBConfig
@@ -49,7 +49,7 @@ register() 调用时:
   3. Memory.from_config() 时:
      → 读到 graph_store.provider = "falkordb"
      → GraphStoreFactory.create("falkordb", config)
-     → 动态加载 mem0_falkordb.graph_memory.MemoryGraph
+     → 动态加载 mem0.graphs.falkordb.graph_memory.MemoryGraph
      → 返回 FalkorDB 的完整实现
 ```
 
@@ -68,14 +68,10 @@ register() 调用时:
       - "6379:6379"
       - "3003:3000"   # FalkorDB Web UI
     volumes:
-      - falkordb_data:/data
+      - ./data/falkordb:/data
     networks:
       - mem0_network
     command: ["redis-server", "--dir", "/data", "--save", "60", "1"]
-
-volumes:
-  # ... 现有的 postgres_db ...
-  falkordb_data:
 ```
 
 ### 2. 安装依赖
@@ -222,6 +218,10 @@ print(graph.query("MATCH (n)-[r]->(m) RETURN n.name, type(r), m.name").result_se
 或通过 FalkorDB Web UI 可视化查看：浏览器访问 `http://localhost:3003`（如果在 Docker 中映射了端口）。
 
 ## 常见问题
+
+### 全新部署后 FalkorDB 中为何已有 mem0_alice 图？
+
+`mem0-falkordb` 插件在 `register()` 初始化时自动创建了 `mem0_alice` 图（空图，零节点零关系）及对应的 telemetry stream。这是库自身的初始化行为，类似 PostgreSQL 的 `alembic_version` 表——框架元数据，非用户数据或旧部署残留。正常现象，无需处理。
 
 ### register() 放在哪里？
 

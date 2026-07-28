@@ -290,7 +290,12 @@ def sanitize_relationship_for_cypher(relationship) -> str:
     for old, new in char_map.items():
         sanitized = sanitized.replace(old, new)
 
-    return re.sub(r"_+", "_", sanitized).strip("_")
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+    # Fallback: replace any remaining non-ASCII/non-alnum chars (CJK etc) with underscore
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", sanitized)
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+    # If everything got stripped (e.g. pure CJK input), use a fallback
+    return sanitized or "related_to"
 
 
 def remove_spaces_from_entities(

@@ -1,0 +1,36 @@
+{
+  "llm": {
+    "provider": "openai",
+    "config": {
+      "api_key": "sk-你的Key",
+      "model": "gpt-4o-mini",
+      "temperature": 0.1,
+      "max_tokens": 2000,
+      "openai_base_url": ""
+    }
+  },
+  "embedder": {
+    "provider": "openai",
+    "config": {
+      "api_key": "sk-你的Key",
+      "model": "text-embedding-3-small",
+      "openai_base_url": "",
+      "embedding_dims": 1536
+    }
+  },
+  "reranker": {
+    "provider": "siliconflow",
+    "config": {
+      "model": "BAAI/bge-reranker-v2-m3",
+      "api_key": "sk-你的Key"
+    }
+  },
+  "graph_store": {
+    "provider": "falkordb",
+    "config": {
+      "host": "falkordb",
+      "port": 6379,
+      "database": "mem0"
+    }
+  }
+}

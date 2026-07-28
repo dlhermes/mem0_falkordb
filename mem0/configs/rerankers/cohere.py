@@ -14,3 +14,4 @@ class CohereRerankerConfig(BaseRerankerConfig):
     model: Optional[str] = Field(default="rerank-v3.5", description="The Cohere rerank model to use")
     return_documents: bool = Field(default=False, description="Whether to return the document texts in the response")
     max_chunks_per_doc: Optional[int] = Field(default=None, description="Maximum number of chunks per document")
+    cohere_base_url: Optional[str] = Field(default=None, description="Custom base URL for Cohere-compatible rerank API")

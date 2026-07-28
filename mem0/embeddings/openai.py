@@ -1,4 +1,6 @@
+import base64
 import os
+import struct
 import warnings
 from typing import Literal, Optional
 
@@ -41,6 +43,14 @@ class OpenAIEmbedding(EmbeddingBase):
             embedder_kwargs["max_retries"] = int(embedder_max_retries)
         self.client = OpenAI(api_key=api_key, base_url=base_url, **embedder_kwargs)
 
+    def _decode_embedding(self, data):
+        """Decode embedding from API response — handles float[] and base64 string."""
+        if isinstance(data, list):
+            return data
+        if isinstance(data, str):
+            raw_bytes = base64.b64decode(data)
+            return list(struct.unpack(f'{len(raw_bytes) // 4}f', raw_bytes))
+
     def embed(self, text, memory_action: Optional[Literal["add", "search", "update"]] = None):
         """
         Get the embedding for the given text using OpenAI.
@@ -55,11 +65,17 @@ class OpenAIEmbedding(EmbeddingBase):
         kwargs = {
             "input": [text],
             "model": self.config.model,
-            "encoding_format": "float",
         }
-        if self._pass_dimensions_to_api:
+        # VoyageAI API rejects 'float' encoding_format and 'dimensions' parameter
+        _is_voyage = "voyageai" in (self.config.openai_base_url or "")
+        if not _is_voyage:
+            kwargs["encoding_format"] = "float"
+        else:
+            kwargs["encoding_format"] = "base64"
+        if self._pass_dimensions_to_api and not _is_voyage:
             kwargs["dimensions"] = self.config.embedding_dims
-        return self.client.embeddings.create(**kwargs).data[0].embedding
+        raw = self.client.embeddings.create(**kwargs).data[0].embedding
+        return self._decode_embedding(raw)
 
     def embed_batch(self, texts, memory_action="add"):
         """Embed multiple texts in a single OpenAI API call.
@@ -74,12 +90,20 @@ class OpenAIEmbedding(EmbeddingBase):
             kwargs = {
                 "input": chunk,
                 "model": self.config.model,
-                "encoding_format": "float",
             }
-            if self._pass_dimensions_to_api:
+            # VoyageAI API rejects 'float' encoding_format and 'dimensions' parameter
+            _is_voyage = "voyageai" in (self.config.openai_base_url or "")
+            if not _is_voyage:
+                kwargs["encoding_format"] = "float"
+            else:
+                kwargs["encoding_format"] = "base64"
+            if self._pass_dimensions_to_api and not _is_voyage:
                 kwargs["dimensions"] = self.config.embedding_dims
             response = self.client.embeddings.create(**kwargs)
-            all_embeddings.extend(item.embedding for item in sorted(response.data, key=lambda x: x.index))
+            all_embeddings.extend(
+                self._decode_embedding(item.embedding)
+                for item in sorted(response.data, key=lambda x: x.index)
+            )
         if len(all_embeddings) != len(texts):
             raise ValueError(
                 f"OpenAI embed_batch() returned {len(all_embeddings)} embeddings for {len(texts)} texts"

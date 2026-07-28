@@ -965,6 +965,7 @@ class Memory(MemoryBase):
                     new_messages=_chunk_text,
                     last_k_messages=last_messages,
                     custom_instructions=custom_instr,
+                    use_input_language=False,
                 )
                 try:
                     _resp = self.llm.generate_response(
@@ -993,6 +994,7 @@ class Memory(MemoryBase):
                 new_messages=parsed_messages,
                 last_k_messages=last_messages,
                 custom_instructions=custom_instr,
+                use_input_language=False,
             )
             try:
                 response = self.llm.generate_response(
@@ -2716,6 +2718,7 @@ class AsyncMemory(MemoryBase):
                     new_messages=_chunk_text,
                     last_k_messages=last_messages,
                     custom_instructions=custom_instr,
+                    use_input_language=False,
                 )
                 try:
                     _resp = await asyncio.to_thread(
@@ -2745,6 +2748,7 @@ class AsyncMemory(MemoryBase):
                 new_messages=parsed_messages,
                 last_k_messages=last_messages,
                 custom_instructions=custom_instr,
+                use_input_language=False,
             )
             try:
                 response = await asyncio.to_thread(
