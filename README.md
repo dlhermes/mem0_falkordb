@@ -14,8 +14,8 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 
 我们恢复了图存储接口层，并在此基础上修复了上游的多个部署痛点：
 
-| 维度 | 上游 mem0 v2.0.14 | 本 Fork |
-|------|------------------|---------|
+|| 维度 | 上游 mem0 v2.0.14 | 本 Fork |
+|:------|:-----------------|:---------|
 | **图存储** | ❌ 已删除整个 `graphs/` 模块 | ✅ 完整恢复，含配置、工厂、LLM schema、实体提取 |
 | **图数据库后端** | ❌ 无 | ✅ FalkorDB（775 行 Cypher 翻译 + 向量索引） |
 | **实体关系** | ❌ 独立实体无连接 | ✅ 实体节点 + 关系边 + 引用计数 + 跨用户隔离 |
@@ -26,16 +26,15 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **性能调优** | 硬编码或不可配 | ✅ 22 个环境变量全覆盖（连接池/HTTP超时/批量/并发/衰减/清理） |
 | **Docker 开箱** | 依赖手动安装系统包 | ✅ Dockerfile 预装 libpq5 |
 | **长消息内存** | 超长消息一次性传入 | ✅ `MEM0_LLM_MAX_INPUT_TOKENS` 自动分块提取 |
-|| **Reranker 重排序** | SDK 有、Server API 未启用 | ✅ Server `/search` API 支持 rerank 参数，配置后自动生效 |
-|| **中文记忆提取** | 英文 Prompt → 英文事实 | ✅ 全中文 system prompt（记忆+图实体+图关系三链路汉化），`sanitize_relationship_for_cypher` 支持 CJK |
-|| **VoyageAI Embedder** | 仅 OpenAI 兼容 | ✅ 自动检测 `voyageai` base_url → `encoding_format: base64` + 跳过 `dimensions` + base64 解码 |
-|| **SiliconFlow Reranker** | 无原生支持 | ✅ 新增 `siliconflow` provider，HTTP 直连 `/v1/rerank`，无需 Cohere SDK |
-|| **mem0-falkordb 内置** | pip 安装，不兼容中文 Cypher 标签 | ✅ Vendor 到 `mem0/graphs/falkordb/`，entity/relation name 自动 sanitize 为 ASCII |
-|| **FalkorDB 内建集成** | 需 `register()` 补丁激活 | ✅ `GraphStoreFactory` + `GraphStoreConfig` 内置，`register()` 不再需要 |
-|| **记忆衰减** | ❌ 无 | ✅ `MEM0_ENABLE_DECAY=true` 启用，半衰期可配，`importance=5` 豁免 |
-|| **cron 过期清理** | ❌ 无 | ✅ 每日凌晨自动清理过期/超期记忆 + FalkorDB 孤立节点，可配保留天数 |
-|| **时间推理** | ❌ 无 | ✅ LLM 提取时自动标注 PAST/PRESENT/FUTURE/TIMELESS，metadata 过滤 |
-|| **定期合并** | ❌ 无 | ✅ cron 按实体分组，LLM 合并 3+ 碎片为精炼事实 |
+| **Reranker 重排序** | SDK 有、Server API 未启用 | ✅ Server `/search` API 支持 rerank 参数，配置后自动生效 |
+| **中文记忆提取** | 英文 Prompt → 英文事实 | ✅ 全中文 system prompt（记忆+图实体+图关系三链路汉化） |
+| **VoyageAI Embedder** | 仅 OpenAI 兼容 | ✅ 自动检测 `voyageai` base_url → `encoding_format: base64` + 跳过 `dimensions` + base64 解码 |
+| **SiliconFlow Reranker** | 无原生支持 | ✅ 新增 `siliconflow` provider，HTTP 直连 `/v1/rerank` |
+| **FalkorDB 内建集成** | 需 `register()` 补丁激活 | ✅ `GraphStoreFactory` + `GraphStoreConfig` 内置，即配即用 |
+| **记忆衰减** | ❌ 无 | ✅ `MEM0_ENABLE_DECAY=true` 启用，半衰期可配，`importance=5` 豁免 |
+| **cron 过期清理** | ❌ 无 | ✅ 每日自动清理过期记忆 + FalkorDB 孤立节点，保留天数可配 |
+| **时间推理** | ❌ 无 | ✅ LLM 提取时自动标注 PAST/PRESENT/FUTURE/TIMELESS，metadata 过滤 |
+| **定期合并** | ❌ 无 | ✅ cron 按实体分组，LLM 合并 3+ 碎片为精炼事实 |
 
 ## 架构
 
