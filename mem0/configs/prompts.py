@@ -515,7 +515,9 @@ ADDITIVE_EXTRACTION_PROMPT = """
       "attributed_to": "user",
       "metadata": {
         "temporal": "PAST",
-        "temporal_date": "2026-03-10"
+        "temporal_date": "2026-03-10",
+        "importance": 5,
+        "lane": "slow"
       }
     }
   ]
@@ -527,9 +529,11 @@ ADDITIVE_EXTRACTION_PROMPT = """
 - **event**（字符串，必填）：始终为"ADD"
 - **linked_memory_ids**（字符串数组，可选）：相关现有记忆的UUID
 - **attributed_to**（字符串，必填）：记忆归属。"user"用于用户陈述的事实，"assistant"用于助手提供的信息
-- **metadata**（对象，必填）：每条记忆的元信息。必须包含 temporal 字段。
+- **metadata**（对象，必填）：每条记忆的元信息。必须包含 temporal、importance、lane 字段。
   - **temporal**（字符串，必填）：事实的时间属性。PAST（过去发生的）、PRESENT（当前状态/持续中）、FUTURE（计划/未来事件）或 TIMELESS（无时效的通用知识）。基于当前日期和消息内容判断。
   - **temporal_date**（字符串，可选）：事实发生的日期，ISO 格式 yyyy-MM-dd。仅在有明确日期时输出。
+  - **importance**（整数 1-5，必填）：5=必须永远记住的关键事实（身份/偏好/决策），永不衰减；1-4=普通事实，不重要也会自然衰减
+  - **lane**（字符串，必填）：速度通道。\"slow\"=经验流程规则（需长期保留）/\"normal\"=一般知识/\"fast\"=情绪临时内容（快速腐化）
 
 ## 规则（Rules）
 - 将每一条值得记住的信息提取为独立记忆对象

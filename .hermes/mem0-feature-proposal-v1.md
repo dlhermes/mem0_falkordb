@@ -1,9 +1,16 @@
-# mem0_falkordb 功能增补方案 v1.1
+# mem0_falkordb 功能增补方案 v1.2
 
-> 架构师审核反馈整合版（v1 → v1.1 关键变更见 §5）。
->
-> 三个功能的灵感来自 aiduMEM（"Clotho"）的设计思想。
-> 已交叉验证 aiduMEM 对应功能的代码实现状态（标注于各节末尾）。
+> 架构师审核反馈整合版。v1.2 更新：§1 Lane 分轨重写（LLM + importance 联动），新增完成状态表。
+
+---
+
+## 实现状态
+
+| Phase | 功能 | 状态 | 说明 |
+|-------|------|------|------|
+| **Phase 1** | 相关性自适应检索深度 | ✅ **已完成** | 三级深度路由 + resolve_search_depth 关键词 DB 匹配 + LRU 缓存。已部署 10.200.1.163 |
+| **Phase 2** | Lane 分轨衰减 | 🔄 待实施 | 见 §1 |
+| **Phase 3** | 用户纠正感知 | ⏳ 待排期 | 见 §3 |
 
 ---
 
@@ -13,7 +20,7 @@
 2. [相关性自适应检索深度](#2-相关性自适应检索深度)
 3. [用户纠正感知](#3-用户纠正感知)
 4. [三功能交互矩阵](#4-三功能交互矩阵)
-5. [v1.1 变更记录](#5-v11-变更记录)
+5. [v1.2 变更记录](#5-v12-变更记录)
 6. [向后兼容总表](#6-向后兼容总表)
 7. [附录：aiduMEM 参考代码状态](#7-附录aidumem-参考代码状态)
 
@@ -23,125 +30,124 @@
 
 ### 1.1 现状
 
-当前全部记忆共享同一衰减参数 `MEM0_DECAY_HALF_LIFE_DAYS`（默认约 30 天）。
-衰减公式：`score' = score × exp(-λ × age_days)`。
+当前已经实现了记忆衰减（`MEM0_ENABLE_DECAY=true`），但有两个问题：
 
-问题：身份类（"发哥用中文"）和情绪类（"今天心情好"）不该用同一半衰期。
+**问题一：全部记忆共享同一半衰期。**
+身份类（"发哥用中文"）和情绪类（"今天心情好"）不该用同一衰减速度。
+
+**问题二：`importance` 字段只读不写。**
+`_decay_fn` 检查 `payload.get("importance") == 5` 来豁免衰减，但没有任何代码往 payload 写入过 `importance`。该项是死代码，豁免永不触发。
 
 ### 1.2 设计
 
-#### Lane 枚举（v1 缩到 3 档）
+#### 双字段：LLM 同时判 importance 和 lane
 
-| Lane | multiplier | 语义 | 半衰期(λ=0.0231) |
-|------|-----------|------|------------------|
-| slow | 0.3 | 需长期保留的经验、流程、规则 | ~100 天 |
-| normal | 1.0 | 一般知识事实 | ~30 天（基准） |
-| fast | 1.5 | 情绪、临时、会话性内容 | ~20 天 |
-
-**不设 identity/preference 独立轨道。** 需要"永不衰减"效果的记忆由 `importance=5` 机制覆盖（已有）。Lane 只控制常规衰减的相对速率——慢多少、快多少，不负责冻结。
-
-multiplier 含义：
-- `0.3` → 基准的 1/3 速度衰减（保留更久）
-- `1.0` → 基准半衰期
-- `1.5` → 基准的 1.5 倍速度衰减（更快腐化）
-
-9 档缩到 3 档的理由：各档 multiplier 值缺乏经验依据，3 档可覆盖主要场景（保留/正常/加速），维护面小。后续有真实衰减数据后再细粒度拆档。
-
-#### 分轨策略：LLM 优先，关键词兜底
+LLM extraction prompt 追加两个输出字段，不增加额外 LLM 调用（扩已有 prompt）：
 
 ```
-记忆文本进入 add() 流程
+在现有 entity extraction prompt 末尾追加：
+
+"判断以下两项：
+ 1. importance（1-5整数）
+    5 = 必须永远记住的身份/偏好/关键决策，永不衰减
+    1-4 = 正常记忆，不重要也会自然腐化
+
+ 2. lane（轨道）
+    slow  = 经验、流程、规则——需要慢速衰减
+    normal = 一般知识——正常衰减
+    fast  = 情绪、会话、临时内容——快速腐化
+
+输出格式: importance: <值>
+         lane: <值>"
+```
+
+#### 两条路径的关系
+
+```
+检索时 _decay_fn(payload):
+
+    # 第 1 道：importance=5 硬豁免
+    if payload.get("importance") == 5:
+        return 1.0                      ← 永不衰减，无视 lane
+
+    # 第 2 道：按 lane 轨道衰减
+    lane = payload.get("lane", "normal")
+    multiplier = lane_multipliers.get(lane, 1.0)
+    return 0.5 ** (age_days / (30 * multiplier))
+```
+
+**不存在 priority 矛盾**——`importance=5` 是"这条特别重要"的硬豁免，过了才轮到 lane。
+
+#### Lane 枚举（3 档）
+
+| Lane | multiplier | 半衰期(基准30天) | 语义 |
+|------|-----------|-----------------|------|
+| slow | 0.3 | ~100 天 | 经验、流程、规则 |
+| normal | 1.0 | ~30 天 | 一般知识事实 |
+| fast | 1.5 | ~20 天 | 情绪、临时性内容 |
+
+#### 写入分轨策略
+
+```
+写入文本进入 add()
+
+  ├─ LLM 提取（扩 prompt）
+  │   同时输出: importance=1-5, lane=slow/normal/fast
   │
-  ├─ 调用时显式指定 lane 参数 → 直接使用（最高优先级）
-  │
-  ├─ LLM 提取阶段（已有 entity extraction）
-  │   └─ 在 entity extraction prompt 末尾追加：
-  │     "判断该记忆的保留优先级：slow / normal / fast
-  │      slow=需要长期保留的经验、流程、规则
-  │      normal=一般知识事实
-  │      fast=情绪、临时性内容
-  │      输出格式: lane: <值>"
-  │     → 不增加额外 LLM 调用，只扩展现有 prompt
-  │
-  └─ 兜底：关键词快速匹配（LLM 未输出 lane 时执行，规则见 1.3 节）
+  └─ LLM 未输出 lane →
+       │
+       ├─ 关键词兜底（只填 lane，importance 留给 LLM）
+       │    踩坑/报错/修复/教训/必须/步骤/流程  → lane=slow
+       │    开心/难过/心情/感觉/今天/刚才        → lane=fast
+       │    未命中 → lane=normal
+       │
+       └─ importance 无兜底 → 不设值（_decay_fn 中 get 不到 = 不走豁免）
 ```
 
-不增加额外 LLM 往返。entity extraction 是 `add()` 流程中已有的环节，只是 expand prompt。
-
-**LLM 分配准确率验证方法**：随机抽样 100 条已分配记忆，人工校验准确率。v1 接受 70%+ 准确率（兜底保底），低于则调 prompt 措辞。
-
-#### 关键词兜底规则（v1 初始词表）
-
-只在 LLM 提取未输出 lane 时触发：
-
-```
-文本含 "踩坑/报错/修复/错误/教训/注意/必须/禁止/铁律/规定/步骤/流程/配置/怎么做/如何操作"
-  → slow
-
-文本含 "开心/难过/心情/感觉/失望/兴奋/今天/刚才/刚刚/临时/突然"
-  → fast
-
-兜底 → normal
-```
-
-快慢两类，命中即归入对应轨道。未命中全归 normal（保有行为）。
-
-多关键词命中时 fast 优先于 slow（情绪信号更强时降级为快衰减）。
-
-#### 衰减公式改动
-
-当前（`mem0/utils/scoring.py` 或 `Memory.search()`）：
-
-```python
-score = original_score * math.exp(-LAMBDA * age_days)
-```
-
-改为：
-
-```python
-multiplier = lane_multipliers.get(memory.lane, 1.0)
-decay_factor = math.exp(-LAMBDA * multiplier * age_days)
-score = original_score * decay_factor
-```
-
-当 `MEM0_LANE_ENABLED=false`（默认值）时，全部 memory 按 normal 轨道（multiplier=1.0），行为与现有代码一致。
+关键词只兜底 lane，不兜底 importance。`importance` 太难用关键词判断，留给 LLM。
 
 #### 持久化
 
-`memories` 表加 `lane TEXT DEFAULT 'normal'`。
+`lane` 和 `importance` 存入 memory payload（metadata dict），不加数据库列。
 
-存量迁移：
-- 已有记录 lane 字段为 `normal`，`multiplier=1.0`，行为与改动前一致
-- 不跑全量迁移脚本，零 breaking change
+- 写入时：`payload.lane = "slow"`，`payload.importance = 5`
+- 检索时：`_decay_fn` 从 payload 读取
+- 存量记忆：`payload.get("lane")` → `None` → `lane_multipliers.get(None, 1.0)` → normal，行为不变
+- migration：无
 
 ### 1.3 改动文件清单
 
-| 文件 | 改动类型 | 内容 |
-|------|---------|------|
-| `mem0/configs/base.py` | 新增 | `Lane` 枚举（slow/normal/fast）+ `LANE_MULTIPLIERS` + `MEM0_LANE_ENABLED` 配置项 |
-| `mem0/configs/prompts.py` | 修改 | entity extraction prompt 追加 lane 输出指令，约 15 词 |
-| `mem0/memory/main.py` | 修改 | `add()` 写入 lane 检测逻辑；`search()` 读取 lane 计算衰减 |
-| `mem0/utils/scoring.py` | 修改 | 衰减函数接受 `lane` 参数，应用 multiplier |
-| `mem0/configs/base.py` | 修改 | `MemoryConfig` 加 `enable_lane` bool 字段 |
-| migration | 新增 | `ALTER TABLE memories ADD COLUMN lane TEXT DEFAULT 'normal'` |
+| 文件 | 改动 | 内容 |
+|------|------|------|
+| `mem0/configs/base.py` | 新增 | `Lane` 枚举 + `LANE_MULTIPLIERS` + `MEM0_LANE_ENABLED` |
+| `mem0/configs/prompts.py` | 修改 | entity extraction prompt 追加 importance + lane 输出指令 |
+| `mem0/memory/main.py` | 修改 | `add()` 写入时 lane 检测（LLM→关键词→normal）；`_decay_fn` 读 lane multiplier |
+| `mem0/memory/main.py` | 修改 | `_decay_fn` 补全 `importance` 写入路径（当前只读不写，修复） |
 
 ### 1.4 新增配置项
 
 ```
-MEM0_LANE_ENABLED=false     # 总开关，默认关保持向后兼容，开启后全部记忆走默认分轨
+MEM0_LANE_ENABLED=false     # 总开关，默认关。开启后 LLM 分轨 + 关键词兜底生效
+MEM0_DECAY_HALF_LIFE_DAYS=30  # 基准半衰期（已有，lane multiplier 在此基础上缩放）
 ```
 
 ### 1.5 效果验证
 
 ```
-# 写入 slow 类记忆
-POST /add {"content": "部署要点：必须先装 libpq5 再跑 pip install"}
+# 写入重要身份记忆
+POST /add {"content": "发哥用中文沟通"}
+→ LLM 提取 → importance=5, lane=normal
+→ 一年后 search：importance=5 → 永不衰减 → 稳定排在前列
 
-# 90 天后 search 同一话题
-POST /search {"query": "部署 libpq5"}
+# 写入经验教训
+POST /add {"content": "部署要点：先装 libpq5 再跑 pip install"}
+→ LLM 提取 → importance=3, lane=slow
+→ 90 天后 search：slow multiplier=0.3 → 保留程度高
 
-# 关 Lane: 衰减 90 天 → score 降低
-# 开 Lane: slow multiplier=0.3 → 保留程度高，排名靠前
+# 写入情绪废话
+POST /add {"content": "今天心情不错"}
+→ LLM 提取或关键词兜底 → lane=fast
+→ 30 天后 search：fast multiplier=1.5 → 快速腐化，排在后
 ```
 
 ---
@@ -655,19 +661,16 @@ metric 名：`correction:trigger_rate`（对齐 §2.5 指标命名规范）。
 
 ---
 
-## 5. v1.1 变更记录
+## 5. v1.2 变更记录
 
-| 项目 | v1 | v1.1 | 原因 |
-|------|----|------|------|
-| **§2 深度默认值** | standard（自相矛盾） | **full**（零行为变化） | 架构师审核 §1.1 |
-| **Lane 档位** | 9 档（identity/preference/procedural/lesson/rule/evidence/knowledge/emotion/general） | **3 档（slow/normal/fast）** | 缺乏经验依据；identity/preference 由 importance=5 覆盖 |
-| **关键词默认词表** | 留空 | **补全初始值** | 无默认词表=功能不可用 |
-| **aiduMEM 参考标注** | 模糊提及 | **§7 附录**完整标注代码实现状态 | 架构师审核 §1.2 |
-| **交互矩阵** | 缺失 | **新增 §4** | 架构师审核 |
-| **实施顺序** | 缺失 | **新增 §4 底部** | 架构师审核 |
-| **Lane 分配验证方法** | 缺失 | **补充至 §1.2** | 架构师审核 §2.3 |
-| **LRU 缓存覆盖** | 模糊 | **minimal + standard 双 TTL** | 架构师审核"降本天花板低" |
+| 项目 | v1.1 | v1.2 | 原因 |
+|------|------|------|------|
+| **§1 Lane 设计** | LLM 仅判 lane；importance 字段只读不写（死代码） | **LLM 同时判 importance + lane；_decay_fn 两条路径都接活** | 审计发现 importance 从未被写入 |
+| **§1 持久化** | memories 表加 lane 列 | **存入 payload metadata 不加列** | lane 随记忆 payload 走，无需 migration |
+| **§1 文档** | 关键词兜底覆盖所有 | **关键词只兜底 lane，importance 留给 LLM** | importance 难用关键词判断 |
+| **新增** 实现状态表 | 无 | **完成状态表**（Phase 1 ✅ / Phase 2 🔄 / Phase 3 ⏳） | 跟踪进度 |
 | **关键词存储** | 环境变量硬编码 | **search_keywords 表**（DB 驱动，热更新） | Phase 1 工程优化：INSERT 即生效、无需重启、exact/contains 分级匹配 |
+| **LRU 缓存覆盖** | 仅 minimal 路径 | **minimal + standard 双 TTL** | Phase 1 降本天花板：short TTL 防重复检索 |
 
 ---
 
