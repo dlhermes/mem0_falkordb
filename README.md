@@ -35,7 +35,7 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **cron 过期清理** | ❌ 无 | ✅ 每日自动清理过期记忆 + FalkorDB 孤立节点，保留天数可配 |
 | **时间推理** | ❌ 无 | ✅ LLM 提取时自动标注 PAST/PRESENT/FUTURE/TIMELESS，metadata 过滤 |
 | **定期合并** | ❌ 无 | ✅ cron 按实体分组，LLM 合并 3+ 碎片为精炼事实 |
-| **矛盾检测** | ❌ 无 | ❌（计划中）异步批处理，LLM 检测新旧记忆冲突后标记 |
+| **矛盾检测** | ❌ 无 | ✅ `MEM0_ENABLE_CONTRADICTION=true` 启用，写入时实时判定矛盾，自动 DELETE 旧记忆 |
 
 ## 架构
 
@@ -357,6 +357,18 @@ _is_voyage = "voyageai" in (self.config.openai_base_url or "")
 - 先 add 合并后记忆，再 delete 旧的（crash-safe）
 - FalkorDB 不可用时降级为关键词搜索分组
 - `CONSOLIDATION_DRY_RUN=true` 干跑，`CONSOLIDATION_MIN_GROUP=3` 分组阈值
+
+### 矛盾检测
+
+上游无此功能。本 Fork 复用 mem0 内置 `DEFAULT_UPDATE_MEMORY_PROMPT` 的 ADD/UPDATE/DELETE/NONE 判定能力：
+
+- 默认关闭（`MEM0_ENABLE_CONTRADICTION=true` 启用）
+- 开启后 LLM 在每次写入时自动对比新消息与已有记忆
+- 发现矛盾（如"喜欢咖啡"→"讨厌咖啡"）→ 自动 DELETE 旧记忆
+- UPDATE 时先 delete 旧向量，再 insert 新版本
+- 零额外 LLM 调用——判定逻辑复用已有提取请求
+- history 表可追溯 DELETE/UPDATE 记录
+- 写入即检测，无需 cron 等待
 
 ## 环境要求
 

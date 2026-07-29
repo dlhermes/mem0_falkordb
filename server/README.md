@@ -381,6 +381,20 @@ docker exec -e CONSOLIDATION_DRY_RUN=true -e MEM0_CONFIG_PATH=/app/config.json m
 docker exec -e MEM0_CONFIG_PATH=/app/config.json mem0-dev-mem0-1 python3 /app/consolidate_memories.py
 ```
 
+## 矛盾检测
+
+写入时实时判定，复用 LLM 提取调用。默认关闭，开启方式：
+
+```bash
+# 在 .env 中添加
+echo "MEM0_ENABLE_CONTRADICTION=true" >> /data/mem0-push/server/.env
+
+# 重建容器生效
+cd /data/mem0-push/server && docker compose up -d --force-recreate mem0
+```
+
+开启后，Agent 写入记忆时发现矛盾（如先存"喜欢咖啡"后说"讨厌咖啡"）→ 自动 DELETE 旧记忆。所有变更记录在 history 表可追溯。
+
 ## 时间推理
 
 ## 本地访问地址
