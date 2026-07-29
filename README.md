@@ -319,12 +319,30 @@ _is_voyage = "voyageai" in (self.config.openai_base_url or "")
 
 ### 记忆衰减
 
-上游无此功能。本 Fork 在搜索 pipeline 中增加了指数衰减：
+上游无此功能。本 Fork 在搜索 pipeline 中增加了指数衰减 + Lane 分轨：
 
-- `MEM0_ENABLE_DECAY=true` 启用
-- `MEM0_DECAY_HALF_LIFE_DAYS=30` 半衰期（默认 30 天）
-- `importance=5` 元数据标记豁免衰减（核心事实不衰减）
-- 纯数学运算，零 LLM 调用
+```
+score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
+```
+
+一条配置 `MEM0_ENABLE_DECAY=true` 启用所有衰减行为。**LLM 和关键词两种方式自动分档，无需人工干预：**
+
+| 档位 | half_life | 触发条件 | 示例记忆 |
+|------|-----------|---------|---------|
+| 永不衰减 | ∞ | LLM 判 `importance=5` | "发哥用中文沟通" |
+| 慢衰减 | ~100 天 | LLM 判 `lane=slow` / 关键词含"踩坑/报错/步骤/流程/配置" | "部署先装libpq5" |
+| 正常衰减 | ~30 天 | 兜底（LLM 未判、关键词未命中、存量记忆） | "Python os.walk用法" |
+| 快衰减 | ~20 天 | LLM 判 `lane=fast` / 关键词含"开心/心情/今天/临时" | "今天心情不错" |
+
+**配置：**
+
+```yaml
+MEM0_ENABLE_DECAY=true              # 启用衰减（默认关）
+MEM0_DECAY_HALF_LIFE_DAYS=30        # 基准半衰期（Lane multiplier 在此基础上缩放）
+```
+
+**注意：**
+- importance=5 元数据标记豁免衰减（核心事实不衰减）——之前是死代码（无人写入），Phase 2 补全了 LLM 写入路径
 - threshold 比较用原始分数（不影响入选资格），排序用衰减后分数
 - ⚠️ 仅限搜索排序：`project.update(decay=True)` 和定时衰减调度（Platform 版功能）暂不可用
 
@@ -393,19 +411,6 @@ MEM0_SEARCH_STD_CACHE_TTL=5         # standard 路径 LRU 缓存 TTL 秒
 ```
 
 种子词表通过迁移 `mem0/migrations/002_search_keywords.py` 初始化（含中英文 ~127 条）。增删词直接操作 `search_keywords` 表，无需重启服务。`depth` 参数也暴露在 `SearchRequest` API 和 SDK `SearchMemoryOptions` 中，外部调用可显式指定。
-
-### Lane 分轨衰减（Phase 2）
-
-本 Fork 完善了记忆衰减机制，LLM 提取时自动判断 `importance` 和 `lane`：
-
-```
-importance=5 → 永不衰减（身份/偏好/关键决策）
-lane=slow    → 0.3x 衰减速度（~100天半衰期，经验/流程）
-lane=normal  → 1.0x 基准衰减（~30天半衰期，一般知识）
-lane=fast    → 1.5x 衰减速度（~20天半衰期，情绪/临时）
-```
-
-启用：`MEM0_ENABLE_DECAY=true` 即可，Lane 乘数自动作用于现有衰减公式。存量记忆无 lane 字段 = normal 行为。
 
 ## 环境要求
 
