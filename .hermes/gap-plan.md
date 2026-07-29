@@ -17,7 +17,7 @@
 | **P0** | **3** | **cron 清理过期记忆和孤立节点** | **✅ 已完成** | **2026-07-29** |
 | **P1** | **4** | **时间推理（轻量方案）** | **✅ 已完成** | **2026-07-29** |
 | **P1** | **5** | **定期合并同主题记忆** | **✅ 已完成** | **2026-07-29** |
-| P2 | 6 | 矛盾检测（异步批处理） | ⬜ 待开始 | — |
+| P2 | 6 | 矛盾检测（写入时实时判定，带开关） | ⬜ 待开始 | — |
 
 ---
 
@@ -30,9 +30,9 @@
 | 2 | 衰减 threshold 交互 | 未定案 | **方案 B**：原始分截断、衰减排位 |
 | 3 | 用户列表来源 | 三选一待决策 | **方案 B**：history 表推导 |
 | 5 | 合并后实体重建 | 未提及 | 依赖 `add()` 自动重建，但需 merge prompt 保留实体名 |
-| 6 | 矛盾检测粗筛 | 无 | **增加 embedding 聚类粗筛**，控制 LLM 调用量 |
+| 6 | 矛盾检测方案 | 异步批处理 O(n²) | **写入时实时（复用 add 调用），代码量从 ~500 行降至 ~80 行** |
 
-工时修正：原估 28h → **38.5h ≈ 5 人天**。
+工时修正：原估 28h → **18.5h ≈ 2.5 人天**（#6 方案变更后）。
 
 ---
 
@@ -290,48 +290,115 @@ cron worker，每日或超过阈值触发：
 
 ---
 
-#### 6. 矛盾检测（异步批处理）
+#### 6. 矛盾检测（写入时实时判定）
 
-**问题**
+**调研结论**
 
-Agent 可能同时持有两条矛盾记忆：
+mem0 官方没有独立的"矛盾检测"模块。它通过 `add()` 流程中的 `DEFAULT_UPDATE_MEMORY_PROMPT`（`prompts.py:179`）内置实现：
+
 ```
-记忆 #A: "用户住在北京"     (2026-01-10)
-记忆 #B: "用户住在上海"     (2026-06-15)
+新消息 → LLM 提取 facts
+       → 向量搜索拉回 top-10 existing_memories
+       → LLM 拿到 {新facts + 已有memories} → 逐条判定：
+
+  ADD    → 新信息
+  UPDATE → 信息更新（"喜欢奶酪披萨"→"喜欢鸡肉披萨"）
+  DELETE → 矛盾（"喜欢奶酪披萨"→"不喜欢奶酪披萨"）★
+  NONE   → 无变化
 ```
-搜索结果中两条都出现，Agent 回答前后矛盾。
 
-**方案**
+矛盾在写入那一刻就被 DELETE 解决。不额外调用 LLM——判定逻辑复用 `add()` 流程的已有调用。
 
-异步批处理，不阻塞 `add()`：
+**当前状态**
 
-- **扫描**：cron 定时（如每日），遍历用户列表（同补齐项 #3），对每个用户调用 `get_all(show_expired=True)` 获取全量记忆
+我们的 Fork 使用 `ADDITIVE_EXTRACTION_PROMPT`（仅 ADD 模式），但**基础设施已就绪**：
 
-- **⚠️ 粗筛层（代码审计新增）**：直接 pairwise 对比是 O(n²) —— 500 条记忆产生 124,750 对 LLM 调用，不可行。必须增加粗筛：
+- `main.py:915-920` — 已有 `vector_store.search()` 拉取 `existing_results`
+- `main.py:923-927` — 已构造 `existing_memories` 列表（含 id + text）
+- `main.py:962-963,992-993` — 已传入 `generate_additive_extraction_prompt()` 的 `existing_memories` 参数
+- `prompts.py:484-486` — `## Existing Memories` 段已格式化在 prompt 中
 
-  | 粗筛方法 | 实现 | 过滤率 |
-  |:---------|:-----|:------|
-  | 实体聚类 | 从 FalkorDB 读同一实体的关联记忆 | ~90% |
-  | 语义相似度 | 用 embedding 筛出相似度 >0.7 的记忆对 | ~70% |
+**缺失**：system prompt 用的是 `ADDITIVE_EXTRACTION_PROMPT`（line 931），而非 `DEFAULT_UPDATE_MEMORY_PROMPT`。前者要求 LLM 只输出 ADD，后者要求判 ADD/UPDATE/DELETE/NONE。
 
-  两步粗筛后：500 条 → 实体分组后每组 ~10 条 → 每组 45 对 → 假设 5 组 → 225 对 → embedding 再筛 → **~100 对 LLM 调用**。可行。
+**方案：切回 UPDATE 模式（带开关）**
 
-- **分对比对**：每组记忆调用 LLM 判断是否存在矛盾。LLM prompt 需同时考虑 temporal 字段（如有）——"北京"是历史住所、"上海"是当前住所，不算矛盾。
+核心改动三处：
 
-- **标记**：发现矛盾时写入 `metadata.contradiction_flag=true` + `metadata.contradiction_with=[memory_id]` + `metadata.contradiction_resolved_by=latest_memory_id`
+| # | 文件 | 改动 | 说明 |
+|:--|:-----|:-----|:-----|
+| 1 | `mem0/memory/main.py:931` | `system_prompt = ADDITIVE_EXTRACTION_PROMPT` → 按开关选择 `UPDATE_MEMORY_PROMPT` | 读 `MEM0_ENABLE_CONTRADICTION` 环境变量，为 true 时切到 UPDATE prompt |
+| 2 | `mem0/memory/main.py:1054-1084` | Phase 4 处理逻辑需区分 event 类型 | 当前只处理 ADD（写向量、写 history）。需新增：event=UPDATE → 调 `_update_memory()`；event=DELETE → 调 `_delete_memory()`；event=NONE → 跳过 |
+| 3 | `prompts.py` | 新建中文版 `UPDATE_MEMORY_PROMPT` | 复制 `DEFAULT_UPDATE_MEMORY_PROMPT`（`prompts.py:179-327`），将示例和指令翻译为中文，保持与 Fork 全链路中文一致 |
 
-- **搜索时**：在 server 层 `search()` 返回结果中，过滤掉被标记为矛盾且非最新的记忆
+**UPDATE prompt 响应格式**：
 
-- **误报处理**：只标记不删除，不自动解决。管理员可手动清除标记。
+```json
+{
+  "memory": [
+    {"id": "0", "text": "名字是张三", "event": "NONE"},
+    {"id": "1", "text": "不喜欢奶酪披萨", "event": "DELETE"},
+    {"id": "2", "text": "喜欢鸡肉披萨", "event": "ADD"}
+  ]
+}
+```
 
-**准确率说明**：LLM 判断矛盾的准确率受限于模型能力。建议：
-- 不依赖单一 LLM 判断，要求 confidence > 0.8 才标记
-- 先在小范围用户（如 10%）灰度，人工抽样验证准确率
-- confidence 阈值需要标注数据集验证（一批标注过的矛盾/非矛盾对跑 LLM，统计 precision/recall 曲线后选定）
+ID 语义：
+- `event=ADD` → 新 ID（字符串数字，后续会被替换为 UUID）
+- `event=UPDATE/DELETE/NONE` → 必须保留输入的 ID（对应 `existing_memories` 中的 id）
+- `uuid_mapping`（`main.py:926`）将整数 ID 映射回真实 UUID
 
-**工作量**：3 人天（原估 2d 偏紧，含粗筛层 + embedding 聚类 + 灰度开关 + 标注数据集计划 + 测试）
+**处理逻辑伪代码**：
 
-**依赖**：补齐项 #1（图集成用于实体分组）、补齐项 #3（用户列表）、补齐项 #4（temporal 字段——没有 temporal 无法区分"历史住所"和"当前住所"）
+```python
+for mem in extracted_memories:
+    event = mem.get("event", "ADD")
+    if event == "NONE":
+        continue
+    elif event == "DELETE":
+        real_id = uuid_mapping.get(mem["id"])
+        if real_id:
+            _delete_memory(real_id)
+    elif event == "UPDATE":
+        real_id = uuid_mapping.get(mem["id"])
+        if real_id:
+            _update_memory(real_id, mem["text"], ...)
+    elif event == "ADD":
+        # 现有逻辑：embed + insert
+        ...
+```
+
+**开关与环境变量**：
+
+```bash
+MEM0_ENABLE_CONTRADICTION=false  # 默认关闭。置 true 启用 UPDATE 模式
+```
+
+- 默认 false → 行为不变，零风险
+- 置 true → 切到 UPDATE prompt，LLM 开始判断 ADD/UPDATE/DELETE
+- 运行时切换：下次 `add()` 调用时生效（每次 `add()` 读 `os.environ.get`）
+
+**风险与缓解**：
+
+| 风险 | 概率 | 缓解 |
+|:-----|:-----|:-----|
+| LLM 误判 DELETE（删了不该删的记忆） | 低 | `DEFAULT_UPDATE_MEMORY_PROMPT` 第 267 行有明确规则：仅当「包含与记忆中现有信息相矛盾的信息」才 DELETE。先灰度 10% 用户验证 1 周 |
+| LLM 漏判（矛盾未被发现） | 中 | `existing_memories` 仅取 top-10，不相关的记忆不在上下文中。可通过增大 `top_k` 缓解 |
+| UPDATE/DELETE 对应的 ID 在 uuid_mapping 中不存在 | 低 | LLM 可能编造 ID。处理时检查 `uuid_mapping.get(id)`，不存在则降级为 ADD |
+| 中文 prompt 与英文示例不一致导致 LLM 困惑 | 低 | 翻译时保留 JSON 输出格式不变，仅翻译中文指令和示例文本 |
+
+**为什么不用 gap-plan 原方案**：
+
+| 维度 | 原方案（异步批处理） | 新方案（写入时实时） |
+|------|---------------------|---------------------|
+| LLM 调用 | 额外 ~5000 对/天（pairwise） | **0**（复用 add 调用） |
+| 代码量 | ~500 行（embedding 聚类 + pairwise + 标记 + 过滤） | **~80 行**（prompt 切换 + event 分发） |
+| 检测时机 | 延迟（cron 一天一次） | **实时**（写入即检测） |
+| 粗筛依赖 | FalkorDB 实体聚类 + embedding 相似度 | 无（向量搜索 top-K 即粗筛） |
+| 误报处理 | 标记不删除 | **直接 DELETE**（history 表可追溯恢复） |
+
+**工作量**：4 人时（prompt 中文化 1h + switch 逻辑 1h + event 分发 1h + 测试 1h）
+
+**依赖**：无。temporal 字段已在 `ADDITIVE_EXTRACTION_PROMPT` 中实现（prompts.py:526-527），UPDATE prompt 复用同一 LLM 调用，不受影响。
 
 
 ## 三、架构决策
@@ -377,7 +444,7 @@ P0 #1 图集成 ─────── 起点，无外部依赖
             │
             ├── P1 #5 定期合并 ─── 依赖 #1（可降级）
             │
-            └── P2 #6 矛盾检测 ─── 依赖 #1 + #3 + #4
+            └── P2 #6 矛盾检测 ─── 无依赖（复用已有 add 基础设施）
 
 ```
 
@@ -395,8 +462,8 @@ P0 #1 图集成 ─────── 起点，无外部依赖
 | **衰减后 score 低于 threshold 导致老记忆消失** | **高** | 衰减形同虚设 | 已定案方案 B：原始分截断 + 衰减排位 |
 | **合并 LLM 丢失实体名称** | 中 | graph 关系断裂 | merge prompt 明确要求保留所有实体名称 |
 | **合并后孤立节点短期累积** | 低 | FalkorDB 查询轻微变慢 | 下次 #3b cron 自动清理 |
-| **矛盾检测 LLM 调用量爆炸** | **高** | 成本不可控 | embedding 聚类粗筛将 124K 对压至 ~100 对 |
-| **矛盾检测 LLM 误报** | 中 | 有效记忆被标记隐藏 | 只标记不删除；confidence > 0.8 才标记；灰度验证 |
+| **矛盾检测 LLM 误判 DELETE** | 低 | 有效记忆被误删 | `DEFAULT_UPDATE_MEMORY_PROMPT` 有明确 DELETE 规则约束；默认关闭开关，灰度 10% 验证；history 表可追溯恢复 |
+| **矛盾检测 LLM 漏判** | 中 | 矛盾未发现 | `existing_memories` 取 top-10，可通过增大 `top_k` 提升召回；不影响现有 ADD 行为 |
 | **FalkorDB 清理误删有效节点** | 低 | 实体丢失 | 只清理 `size(--)=0` 的孤立节点 |
 | **合并时 LLM 限流 / 超时** | 低 | 跳过该组 | 不做重试，跳过该组保整体进度 |
 
@@ -410,7 +477,7 @@ P0 #1 图集成 ─────── 起点，无外部依赖
 | #3 cron 清理 | 手动触发清理，确认过期记忆被 delete、孤立节点被 DETACH DELETE |
 | #4 时间推理 | 写入含 `metadata.temporal="FUTURE"` 的记忆，搜索时用 `filters: {metadata.temporal: "PAST"}` 确认不返回 |
 | #5 定期合并 | 写入 5 条同主题记忆（含实体名），触发合并，确认合并后记忆保留实体名且 FalkorDB 关系重建 |
-| #6 矛盾检测 | 写入两条矛盾记忆（如"住在北京"和"住在上海"），搜索后确认旧地址被过滤；验证粗筛未遗漏矛盾对 |
+| #6 矛盾检测 | 设置 `MEM0_ENABLE_CONTRADICTION=true`，写入两条矛盾记忆（如先 add "喜欢咖啡"再 add "讨厌咖啡"），确认旧记忆被 DELETE；检查 history 表有 DELETE 记录可追溯 |
 
 
 ## 七、未纳入范围
@@ -431,7 +498,7 @@ P0 #1 图集成 ─────── 起点，无外部依赖
 | P0 | #3 cron 清理 | 2h | **2h** | 不变 |
 | P1 | #4 时间推理 | 1h | **0.5h** | 纯 config 改动 |
 | P1 | #5 合并 | 3h | **3h** | 不变 |
-| P2 | #6 矛盾检测 | 16h | **24h** | 增加粗筛层 + embedding 聚类 |
-| **总计** | | **28h** | **38.5h ≈ 5 人天** | |
+| P2 | #6 矛盾检测 | 24h | **4h** | 方案从异步批处理改为写入时实时（复用 add 调用，代码量从 ~500 行降至 ~80 行） |
+| **总计** | | **28h** | **18.5h ≈ 2.5 人天** | |
 
 > 注：以上为纯开发工时。代码审查、部署、回归测试另计。若 #4 与 #1 并行开工可压缩总工期至约 4 天。
