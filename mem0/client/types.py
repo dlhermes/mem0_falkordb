@@ -52,6 +52,7 @@ class SearchMemoryOptions(BaseModel):
     fields: Optional[List[str]] = Field(default=None, description="Fields to include in the response")
     categories: Optional[List[str]] = Field(default=None, description="Categories to filter by")
     show_expired: Optional[bool] = Field(default=None, description="Whether to include expired memories")
+    depth: Optional[str] = Field(default=None, description="Search depth: minimal/standard/full.")
 
 
 class GetAllMemoryOptions(BaseModel):

@@ -431,6 +431,18 @@ def _payload_is_expired(payload: Optional[Dict[str, Any]]) -> bool:
         return False
 
 
+def resolve_search_depth(query: str) -> str:
+    """Determine search depth based on query characteristics.
+
+    Current version returns the default depth. Detailed heuristics
+    (keyword matching, long-query detection) are deferred to Phase 2.
+    """
+    if len(query) < 2:
+        return "minimal"
+    # TODO: Phase 2 — keyword matching and long-query detection heuristics
+    return os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
+
+
 setup_config()
 logger = logging.getLogger(__name__)
 
@@ -1510,6 +1522,7 @@ class Memory(MemoryBase):
         explain: bool = False,
         reference_date: Optional[Any] = None,
         show_expired: bool = False,
+        depth: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -1613,33 +1626,40 @@ class Memory(MemoryBase):
             },
         )
 
+        if os.environ.get("MEM0_SEARCH_DEPTH_AUTO", "true").lower() == "true":
+            depth = depth or resolve_search_depth(query)
+        else:
+            depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
+        if depth == "minimal":
+            return {"results": []}
+
         search_start = time.perf_counter()
         original_memories = self._search_vector_store(
             query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired
         )
         search_elapsed_seconds = time.perf_counter() - search_start
 
-        # Merge graph search results if graph store is enabled
-        if self.graph:
-            try:
-                graph_future = self._executor.submit(self.graph.search, query, effective_filters, limit)
-                graph_relations = graph_future.result()
-                if graph_relations:
-                    original_memories = list(original_memories) + [
-                        {"id": str(uuid.uuid4()), "memory": str(r), "event": "ADD"}
-                        for r in graph_relations
-                    ]
-            except Exception as e:
-                logger.warning(f"Graph search failed, using vector store results only: {e}")
+        if depth == "full":
+            # Merge graph search results if graph store is enabled
+            if self.graph:
+                try:
+                    graph_future = self._executor.submit(self.graph.search, query, effective_filters, limit)
+                    graph_relations = graph_future.result()
+                    if graph_relations:
+                        original_memories = list(original_memories) + [
+                            {"id": str(uuid.uuid4()), "memory": str(r), "event": "ADD"}
+                            for r in graph_relations
+                        ]
+                except Exception as e:
+                    logger.warning(f"Graph search failed, using vector store results only: {e}")
 
-
-        # Apply reranking if enabled and reranker is available
-        if rerank and self.reranker and original_memories:
-            try:
-                reranked_memories = self.reranker.rerank(query, original_memories, limit)
-                original_memories = reranked_memories
-            except Exception as e:
-                logger.warning(f"Reranking failed, using original results: {e}")
+            # Apply reranking if enabled and reranker is available
+            if rerank and self.reranker and original_memories:
+                try:
+                    reranked_memories = self.reranker.rerank(query, original_memories, limit)
+                    original_memories = reranked_memories
+                except Exception as e:
+                    logger.warning(f"Reranking failed, using original results: {e}")
 
         if temporal_usage_notice:
             display_temporal_usage_notice(self, "sync", "search", *temporal_usage_notice)
@@ -3352,6 +3372,7 @@ class AsyncMemory(MemoryBase):
         explain: bool = False,
         reference_date: Optional[Any] = None,
         show_expired: bool = False,
+        depth: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -3459,35 +3480,42 @@ class AsyncMemory(MemoryBase):
             },
         )
 
+        if os.environ.get("MEM0_SEARCH_DEPTH_AUTO", "true").lower() == "true":
+            depth = depth or resolve_search_depth(query)
+        else:
+            depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
+        if depth == "minimal":
+            return {"results": []}
+
         search_start = time.perf_counter()
         original_memories = await self._search_vector_store(
             query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired
         )
         search_elapsed_seconds = time.perf_counter() - search_start
 
-        # Merge graph search results if graph store is enabled
-        if self.graph:
-            try:
-                graph_relations = await asyncio.to_thread(self.graph.search, query, effective_filters, limit)
-                if graph_relations:
-                    original_memories = list(original_memories) + [
-                        {"id": str(uuid.uuid4()), "memory": str(r), "event": "ADD"}
-                        for r in graph_relations
-                    ]
-            except Exception as e:
-                logger.warning(f"Graph search failed, using vector store results only: {e}")
+        if depth == "full":
+            # Merge graph search results if graph store is enabled
+            if self.graph:
+                try:
+                    graph_relations = await asyncio.to_thread(self.graph.search, query, effective_filters, limit)
+                    if graph_relations:
+                        original_memories = list(original_memories) + [
+                            {"id": str(uuid.uuid4()), "memory": str(r), "event": "ADD"}
+                            for r in graph_relations
+                        ]
+                except Exception as e:
+                    logger.warning(f"Graph search failed, using vector store results only: {e}")
 
-
-        # Apply reranking if enabled and reranker is available
-        if rerank and self.reranker and original_memories:
-            try:
-                # Run reranking in thread pool to avoid blocking async loop
-                reranked_memories = await asyncio.to_thread(
-                    self.reranker.rerank, query, original_memories, limit
-                )
-                original_memories = reranked_memories
-            except Exception as e:
-                logger.warning(f"Reranking failed, using original results: {e}")
+            # Apply reranking if enabled and reranker is available
+            if rerank and self.reranker and original_memories:
+                try:
+                    # Run reranking in thread pool to avoid blocking async loop
+                    reranked_memories = await asyncio.to_thread(
+                        self.reranker.rerank, query, original_memories, limit
+                    )
+                    original_memories = reranked_memories
+                except Exception as e:
+                    logger.warning(f"Reranking failed, using original results: {e}")
 
         if temporal_usage_notice:
             await display_temporal_usage_notice_async(self, "async", "search", *temporal_usage_notice)
