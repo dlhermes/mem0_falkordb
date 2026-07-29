@@ -10,7 +10,7 @@
 |-------|------|------|------|
 | **Phase 1** | 相关性自适应检索深度 | ✅ **已完成** | 三级深度路由 + resolve_search_depth 关键词 DB 匹配 + LRU 缓存。已部署 10.200.1.163 |
 | **Phase 2** | Lane 分轨衰减 | ✅ **已完成** | LLM 提取 + importance/lane 双字段 + _decay_fn lane multiplier + 3档衰减速度 |
-| **Phase 3** | 用户纠正感知 | ⏳ 待排期 | 见 §3 |
+| **Phase 3** | 用户纠正感知 | ✅ **已完成** | search 检测纠正关键词 → 降 threshold、扩 top_k、强制 full depth |
 
 ---
 

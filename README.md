@@ -338,7 +338,27 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 
 ```yaml
 MEM0_ENABLE_DECAY=true              # 启用衰减（默认关）
-MEM0_DECAY_HALF_LIFE_DAYS=30        # 基准半衰期（Lane multiplier 在此基础上缩放）
+MEM0_DECAY_HALF_LIFE_DAYS=30        # 基准半衰期
+```
+
+### 用户纠正感知
+
+用户说"不对/记错了/应该是"等纠正信号时，搜索自动放宽参数让旧记忆进入候选，Agent 能自我纠正：
+
+```
+search("不对，发哥喜欢喝咖啡")
+  → 命中 correction 关键词（27条种子词）
+  → threshold 降至 0.1（默认0.3）
+  → top_k 扩至 30（默认10-20）
+  → depth=full（强制全套检索）
+```
+
+配置：
+
+```yaml
+MEM0_CORRECTION_MODE=true           # 启用纠正感知（默认关）
+MEM0_CORRECTION_THRESHOLD=0.1       # 放宽后的相似度阈值
+MEM0_CORRECTION_TOP_K=30            # 放宽后返回数量上限
 ```
 
 ### cron 过期清理
