@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y libpq5 && rm -rf /var/lib/apt/lists/*
 # Copy and install server requirements
 COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# Download spaCy English model (for entity extraction in mixed-language scenarios)
+RUN python -m spacy download en_core_web_sm
 
 # Install mem0 SDK from local source
 COPY pyproject.toml README.md LICENSE ./
