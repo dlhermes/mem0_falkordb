@@ -19,6 +19,7 @@ from mem0.configs.enums import MemoryType
 from mem0.configs.prompts import (
     ADDITIVE_EXTRACTION_PROMPT,
     AGENT_CONTEXT_SUFFIX,
+    DEFAULT_UPDATE_MEMORY_PROMPT,
     PROCEDURAL_MEMORY_SYSTEM_PROMPT,
     generate_additive_extraction_prompt,
 )
@@ -928,7 +929,10 @@ class Memory(MemoryBase):
 
         # Phase 2: LLM extraction (single call or chunked)
         is_agent_scoped = bool(filters.get("agent_id")) and not filters.get("user_id")
-        system_prompt = ADDITIVE_EXTRACTION_PROMPT
+        if os.environ.get("MEM0_ENABLE_CONTRADICTION", "").lower() == "true":
+            system_prompt = DEFAULT_UPDATE_MEMORY_PROMPT
+        else:
+            system_prompt = ADDITIVE_EXTRACTION_PROMPT
         if is_agent_scoped:
             system_prompt += AGENT_CONTEXT_SUFFIX
         custom_instr = prompt or self.custom_instructions
@@ -1050,12 +1054,42 @@ class Memory(MemoryBase):
                 existing_hashes.add(h)
 
         records = []  # (memory_id, text, embedding, payload)
+        delete_ids = []  # memory_ids to delete (UPDATE/DELETE events)
+        update_records = []  # (memory_id, text, embedding, payload) for re-inserts
         seen_hashes = set()  # dedup within the current batch
         for mem in extracted_memories:
             text = mem.get("text")
             if not text or text not in embed_map:
                 continue
 
+            event = mem.get("event", "ADD")
+            if event == "NONE":
+                continue
+            if event in ("DELETE", "UPDATE"):
+                real_id = uuid_mapping.get(mem.get("id"))
+                if real_id:
+                    delete_ids.append(str(real_id))
+                    if event == "DELETE":
+                        # Log deletion to history
+                        try:
+                            self.db.add_history(str(real_id), text, None, "DELETE", created_at=datetime.now(timezone.utc).isoformat())
+                        except Exception as e:
+                            logger.warning(f"Failed to log DELETE history for {real_id}: {e}")
+                    elif event == "UPDATE":
+                        # Schedule re-insert with updated text
+                        mem_metadata_update = deepcopy(metadata)
+                        mem_metadata_update["data"] = text
+                        mem_metadata_update["hash"] = hashlib.md5(text.encode()).hexdigest()
+                        mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
+                        mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
+                        llm_meta = mem.get("metadata") or {}
+                        for k in ("temporal", "temporal_date"):
+                            if k in llm_meta:
+                                mem_metadata_update[k] = llm_meta[k]
+                        update_records.append((str(real_id), text, embed_map[text], mem_metadata_update))
+                continue  # DELETE done; UPDATE handled via delete + re-insert below
+
+            # ADD (default) — current logic
             mem_hash = hashlib.md5(text.encode()).hexdigest()
             if mem_hash in existing_hashes or mem_hash in seen_hashes:
                 logger.debug(f"Skipping duplicate memory (hash match): {text[:50]}")
@@ -1082,6 +1116,38 @@ class Memory(MemoryBase):
                     mem_metadata[k] = llm_meta[k]
 
             records.append((memory_id, text, embed_map[text], mem_metadata))
+
+        if not records and not delete_ids and not update_records:
+            self.db.save_messages(messages, session_scope)
+            return []
+
+        # Execute DELETE and UPDATE events
+        if delete_ids:
+            try:
+                self.vector_store.delete(ids=delete_ids)
+            except Exception as e:
+                logger.warning(f"Failed to delete memories {delete_ids}: {e}")
+        if update_records:
+            # Delete old vectors first, then re-insert new ones
+            upd_ids = [r[0] for r in update_records]
+            try:
+                self.vector_store.delete(ids=upd_ids)
+            except Exception as e:
+                logger.warning(f"Failed to delete old memories for update {upd_ids}: {e}")
+            try:
+                self.vector_store.insert(
+                    vectors=[r[2] for r in update_records],
+                    ids=[r[0] for r in update_records],
+                    payloads=[r[3] for r in update_records],
+                )
+            except Exception as e:
+                logger.warning(f"Failed to insert updated memories: {e}")
+            # Log update history
+            for upd_id, upd_text in [(r[0], r[1]) for r in update_records]:
+                try:
+                    self.db.add_history(upd_id, None, upd_text, "UPDATE", created_at=datetime.now(timezone.utc).isoformat())
+                except Exception as e:
+                    logger.warning(f"Failed to log UPDATE history for {upd_id}: {e}")
 
         if not records:
             self.db.save_messages(messages, session_scope)
@@ -2706,7 +2772,10 @@ class AsyncMemory(MemoryBase):
 
         # Phase 2: LLM extraction (single call or chunked)
         is_agent_scoped = bool(effective_filters.get("agent_id")) and not effective_filters.get("user_id")
-        system_prompt = ADDITIVE_EXTRACTION_PROMPT
+        if os.environ.get("MEM0_ENABLE_CONTRADICTION", "").lower() == "true":
+            system_prompt = DEFAULT_UPDATE_MEMORY_PROMPT
+        else:
+            system_prompt = ADDITIVE_EXTRACTION_PROMPT
         if is_agent_scoped:
             system_prompt += AGENT_CONTEXT_SUFFIX
         custom_instr = prompt or self.custom_instructions
@@ -2827,12 +2896,42 @@ class AsyncMemory(MemoryBase):
                 existing_hashes.add(h)
 
         records = []
+        delete_ids = []
+        update_records = []
         seen_hashes = set()
         for mem in extracted_memories:
             text = mem.get("text")
             if not text or text not in embed_map:
                 continue
 
+            event = mem.get("event", "ADD")
+            if event == "NONE":
+                continue
+            if event in ("DELETE", "UPDATE"):
+                real_id = uuid_mapping.get(mem.get("id"))
+                if real_id:
+                    delete_ids.append(str(real_id))
+                    if event == "DELETE":
+                        try:
+                            await asyncio.to_thread(
+                                self.db.add_history, str(real_id), text, None, "DELETE"
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to log DELETE history for {real_id}: {e}")
+                    elif event == "UPDATE":
+                        mem_metadata_update = deepcopy(metadata)
+                        mem_metadata_update["data"] = text
+                        mem_metadata_update["hash"] = hashlib.md5(text.encode()).hexdigest()
+                        mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
+                        mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
+                        llm_meta = mem.get("metadata") or {}
+                        for k in ("temporal", "temporal_date"):
+                            if k in llm_meta:
+                                mem_metadata_update[k] = llm_meta[k]
+                        update_records.append((str(real_id), text, embed_map[text], mem_metadata_update))
+                continue
+
+            # ADD (default)
             mem_hash = hashlib.md5(text.encode()).hexdigest()
             if mem_hash in existing_hashes or mem_hash in seen_hashes:
                 logger.debug(f"Skipping duplicate memory (hash match, async): {text[:50]}")
@@ -2859,6 +2958,37 @@ class AsyncMemory(MemoryBase):
                     mem_metadata[k] = llm_meta[k]
 
             records.append((memory_id, text, embed_map[text], mem_metadata))
+
+        if not records and not delete_ids and not update_records:
+            await asyncio.to_thread(self.db.save_messages, messages, session_scope)
+            return []
+
+        # Execute DELETE and UPDATE events (async)
+        if delete_ids:
+            try:
+                await asyncio.to_thread(self.vector_store.delete, ids=delete_ids)
+            except Exception as e:
+                logger.warning(f"Failed to delete memories (async) {delete_ids}: {e}")
+        if update_records:
+            upd_ids = [r[0] for r in update_records]
+            try:
+                await asyncio.to_thread(self.vector_store.delete, ids=upd_ids)
+            except Exception as e:
+                logger.warning(f"Failed to delete old memories for update (async) {upd_ids}: {e}")
+            try:
+                await asyncio.to_thread(
+                    self.vector_store.insert,
+                    vectors=[r[2] for r in update_records],
+                    ids=[r[0] for r in update_records],
+                    payloads=[r[3] for r in update_records],
+                )
+            except Exception as e:
+                logger.warning(f"Failed to insert updated memories (async): {e}")
+            for upd_id, upd_text in [(r[0], r[1]) for r in update_records]:
+                try:
+                    await asyncio.to_thread(self.db.add_history, upd_id, None, upd_text, "UPDATE")
+                except Exception as e:
+                    logger.warning(f"Failed to log UPDATE history for {upd_id}: {e}")
 
         if not records:
             await asyncio.to_thread(self.db.save_messages, messages, session_scope)
