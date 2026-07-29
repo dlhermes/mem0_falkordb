@@ -430,6 +430,14 @@ LLM 提取记忆时自动判断 `importance` 和 `lane`，一条 `MEM0_ENABLE_DE
 
 存量记忆无 lane 字段 → normal 行为，零变化。
 
+## 用户纠正感知
+
+`MEM0_CORRECTION_MODE=true` 启用（默认关）。搜索时检测纠正关键词（27条种子词，来自 `search_keywords` 表），命中后自动放宽参数：
+
+- threshold → 0.1（默认 0.3）
+- top_k → 30（默认 10-20）
+- depth → full（强制全套检索）
+
 ## 本地访问地址
 
 - Dashboard: `http://localhost:3002`
