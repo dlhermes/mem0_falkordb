@@ -5,7 +5,6 @@ import threading
 from copy import deepcopy
 from typing import Any, Callable, Dict
 
-from mem0.graphs.falkordb import register as _falkordb_register
 from mem0 import Memory
 
 _state_lock = threading.RLock()
@@ -91,7 +90,6 @@ def _load_config_file() -> Dict[str, Any]:
 
 def initialize_state(default_config: Dict[str, Any]) -> None:
     global _current_config, _memory_instance
-    _falkordb_register()
     with _state_lock:
         _current_config = deepcopy(default_config)
         file_overrides = _load_config_file()

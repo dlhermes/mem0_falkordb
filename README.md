@@ -35,6 +35,7 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **cron 过期清理** | ❌ 无 | ✅ 每日自动清理过期记忆 + FalkorDB 孤立节点，保留天数可配 |
 | **时间推理** | ❌ 无 | ✅ LLM 提取时自动标注 PAST/PRESENT/FUTURE/TIMELESS，metadata 过滤 |
 | **定期合并** | ❌ 无 | ✅ cron 按实体分组，LLM 合并 3+ 碎片为精炼事实 |
+| **矛盾检测** | ❌ 无 | ❌（计划中）异步批处理，LLM 检测新旧记忆冲突后标记 |
 
 ## 架构
 
@@ -274,7 +275,8 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 | 图关系提取 | `mem0/graphs/utils.py` `EXTRACT_RELATIONS_PROMPT` | 中文化 + 语言强制指令 |
 | Cypher 安全 | `mem0/memory/utils.py` `sanitize_relationship_for_cypher` | CJK 字符 fallback → underscore → 空值兜底 `related_to` |
 | 图标签安全 | `mem0/graphs/falkordb/graph_memory.py` `_add_entities` | entity_type / relationship 自动 ASCII sanitize（FalkorDB 标签仅支持 ASCII）|
-| CJK BM25 分词 | `mem0/graphs/falkordb/graph_memory.py` `_tokenize_cjk` | jieba 词级切分 + 非中文空格切分，BM25 关键词匹配精度提升 |
+|| CJK BM25 分词 | `mem0/graphs/falkordb/graph_memory.py` `_tokenize_cjk` | jieba 词级切分 + 非中文空格切分，BM25 关键词匹配精度提升 |
+|| spaCy 英文 NLP | `mem0/utils/spacy_models.py` | 英文实体提取 + 词形还原。中英混杂场景需安装：`pip install spacy && python -m spacy download en_core_web_sm` |
 
 ### VoyageAI Embedding 兼容
 
@@ -323,6 +325,7 @@ _is_voyage = "voyageai" in (self.config.openai_base_url or "")
 - `importance=5` 元数据标记豁免衰减（核心事实不衰减）
 - 纯数学运算，零 LLM 调用
 - threshold 比较用原始分数（不影响入选资格），排序用衰减后分数
+- ⚠️ 仅限搜索排序：`project.update(decay=True)` 和定时衰减调度（Platform 版功能）暂不可用
 
 ### cron 过期清理
 
