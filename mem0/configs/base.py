@@ -21,6 +21,12 @@ class SearchDepth(str, Enum):
     full = "full"
 
 
+class Lane(str, Enum):
+    slow = "slow"
+    normal = "normal"
+    fast = "fast"
+
+
 class MemoryItem(BaseModel):
     id: str = Field(..., description="The unique identifier for the text data")
     memory: str = Field(
@@ -32,6 +38,13 @@ class MemoryItem(BaseModel):
     score: Optional[float] = Field(None, description="The score associated with the text data")
     created_at: Optional[str] = Field(None, description="The timestamp when the memory was created")
     updated_at: Optional[str] = Field(None, description="The timestamp when the memory was updated")
+
+
+LANE_MULTIPLIERS = {
+    "slow": 0.3,
+    "normal": 1.0,
+    "fast": 1.5,
+}
 
 
 class MemoryConfig(BaseModel):
@@ -73,6 +86,10 @@ class MemoryConfig(BaseModel):
     )
     enable_search_depth: bool = Field(
         description="Enable search depth routing",
+        default=False,
+    )
+    enable_lane: bool = Field(
+        description="Enable lane-based decay multiplier",
         default=False,
     )
 

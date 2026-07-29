@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional
 
 from pydantic import ValidationError
 
-from mem0.configs.base import MemoryConfig, MemoryItem
+from mem0.configs.base import LANE_MULTIPLIERS, MemoryConfig, MemoryItem
 from mem0.configs.enums import MemoryType
 from mem0.configs.prompts import (
     ADDITIVE_EXTRACTION_PROMPT,
@@ -1871,7 +1871,9 @@ class Memory(MemoryBase):
                     return 1.0
                 try:
                     age_days = (_now - datetime.fromisoformat(created)).days
-                    return 0.5 ** (age_days / _half_life)
+                    lane = payload.get("lane")
+                    multiplier = LANE_MULTIPLIERS.get(lane, 1.0)
+                    return 0.5 ** (age_days / (_half_life * multiplier))
                 except (ValueError, TypeError):
                     return 1.0
         else:
@@ -3734,7 +3736,9 @@ class AsyncMemory(MemoryBase):
                     return 1.0
                 try:
                     age_days = (_now - datetime.fromisoformat(created)).days
-                    return 0.5 ** (age_days / _half_life)
+                    lane = payload.get("lane")
+                    multiplier = LANE_MULTIPLIERS.get(lane, 1.0)
+                    return 0.5 ** (age_days / (_half_life * multiplier))
                 except (ValueError, TypeError):
                     return 1.0
         else:
