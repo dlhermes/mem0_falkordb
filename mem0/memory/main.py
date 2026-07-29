@@ -1123,17 +1123,18 @@ class Memory(MemoryBase):
 
         # Execute DELETE and UPDATE events
         if delete_ids:
-            try:
-                self.vector_store.delete(ids=delete_ids)
-            except Exception as e:
-                logger.warning(f"Failed to delete memories {delete_ids}: {e}")
+            for did in delete_ids:
+                try:
+                    self.vector_store.delete(vector_id=did)
+                except Exception as e:
+                    logger.warning(f"Failed to delete memory {did}: {e}")
         if update_records:
             # Delete old vectors first, then re-insert new ones
-            upd_ids = [r[0] for r in update_records]
-            try:
-                self.vector_store.delete(ids=upd_ids)
-            except Exception as e:
-                logger.warning(f"Failed to delete old memories for update {upd_ids}: {e}")
+            for uid in (r[0] for r in update_records):
+                try:
+                    self.vector_store.delete(vector_id=uid)
+                except Exception as e:
+                    logger.warning(f"Failed to delete old memory for update {uid}: {e}")
             try:
                 self.vector_store.insert(
                     vectors=[r[2] for r in update_records],
@@ -2965,16 +2966,17 @@ class AsyncMemory(MemoryBase):
 
         # Execute DELETE and UPDATE events (async)
         if delete_ids:
-            try:
-                await asyncio.to_thread(self.vector_store.delete, ids=delete_ids)
-            except Exception as e:
-                logger.warning(f"Failed to delete memories (async) {delete_ids}: {e}")
+            for did in delete_ids:
+                try:
+                    await asyncio.to_thread(self.vector_store.delete, vector_id=did)
+                except Exception as e:
+                    logger.warning(f"Failed to delete memory (async) {did}: {e}")
         if update_records:
-            upd_ids = [r[0] for r in update_records]
-            try:
-                await asyncio.to_thread(self.vector_store.delete, ids=upd_ids)
-            except Exception as e:
-                logger.warning(f"Failed to delete old memories for update (async) {upd_ids}: {e}")
+            for uid in (r[0] for r in update_records):
+                try:
+                    await asyncio.to_thread(self.vector_store.delete, vector_id=uid)
+                except Exception as e:
+                    logger.warning(f"Failed to delete old memory for update (async) {uid}: {e}")
             try:
                 await asyncio.to_thread(
                     self.vector_store.insert,
