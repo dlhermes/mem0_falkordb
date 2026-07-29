@@ -1069,6 +1069,24 @@ class Memory(MemoryBase):
             self.db.save_messages(messages, session_scope)
             return []
 
+        # Phase 2.5: Lane keyword fallback (when LLM didn't output lane)
+        for mem in extracted_memories:
+            if not isinstance(mem, dict):
+                continue
+            meta = mem.get("metadata")
+            if meta and meta.get("lane"):
+                continue  # LLM already set lane, skip fallback
+            text = (mem.get("text") or "").lower()
+            lane = "normal"
+            if any(kw in text for kw in ["踩坑", "报错", "修复", "错误", "教训", "注意", "必须", "禁止", "铁律", "规定", "步骤", "流程", "配置", "怎么做", "如何操作"]):
+                lane = "slow"
+            elif any(kw in text for kw in ["开心", "难过", "心情", "感觉", "失望", "兴奋", "今天", "刚才", "刚刚", "临时", "突然"]):
+                lane = "fast"
+            if meta is None:
+                mem["metadata"] = {"lane": lane}
+            else:
+                meta["lane"] = lane
+
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
         try:
@@ -2931,6 +2949,24 @@ class AsyncMemory(MemoryBase):
         if not extracted_memories:
             await asyncio.to_thread(self.db.save_messages, messages, session_scope)
             return []
+
+        # Phase 2.5: Lane keyword fallback (when LLM didn't output lane)
+        for mem in extracted_memories:
+            if not isinstance(mem, dict):
+                continue
+            meta = mem.get("metadata")
+            if meta and meta.get("lane"):
+                continue  # LLM already set lane, skip fallback
+            text = (mem.get("text") or "").lower()
+            lane = "normal"
+            if any(kw in text for kw in ["踩坑", "报错", "修复", "错误", "教训", "注意", "必须", "禁止", "铁律", "规定", "步骤", "流程", "配置", "怎么做", "如何操作"]):
+                lane = "slow"
+            elif any(kw in text for kw in ["开心", "难过", "心情", "感觉", "失望", "兴奋", "今天", "刚才", "刚刚", "临时", "突然"]):
+                lane = "fast"
+            if meta is None:
+                mem["metadata"] = {"lane": lane}
+            else:
+                meta["lane"] = lane
 
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
