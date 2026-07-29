@@ -397,6 +397,26 @@ cd /data/mem0-push/server && docker compose up -d --force-recreate mem0
 
 ## 时间推理
 
+## 搜索深度路由
+
+`/search` 端点新增可选参数 `depth`（minimal/standard/full）：
+
+- `minimal` — 跳过全部检索（命中废话白名单时）
+- `standard` — 仅向量+BM25，跳过图查询和 rerank
+- `full` — 完整检索（默认值，行为不变）
+
+关键词管理：通过 `search_keywords` 表（SQLite）管理，`INSERT` 即生效，无需重启。
+
+```bash
+# 查看当前词表
+docker exec mem0-dev-mem0-1 sqlite3 /root/.mem0/history.db \
+  "SELECT * FROM search_keywords ORDER BY category, keyword"
+
+# 添加 minimal 拦截词
+docker exec mem0-dev-mem0-1 sqlite3 /root/.mem0/history.db \
+  "INSERT OR IGNORE INTO search_keywords (category, keyword, match_type, lang) VALUES ('minimal', '收到', 'exact', 'zh')"
+```
+
 ## 本地访问地址
 
 - Dashboard: `http://localhost:3002`
