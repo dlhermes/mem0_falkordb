@@ -1677,6 +1677,21 @@ class Memory(MemoryBase):
         if depth == "minimal":
             return {"results": []}
 
+        # Correction mode: detect user correction signals, widen search
+        if os.environ.get("MEM0_CORRECTION_MODE", "false").lower() == "true":
+            try:
+                cur = self.db.conn.execute(
+                    "SELECT keyword FROM search_keywords WHERE category='correction' AND match_type='contains'"
+                )
+                for (kw,) in cur.fetchall():
+                    if kw.lower() in query.lower():
+                        threshold = min(threshold, float(os.environ.get("MEM0_CORRECTION_THRESHOLD", "0.1")))
+                        limit = max(limit, int(os.environ.get("MEM0_CORRECTION_TOP_K", "30")))
+                        depth = "full"
+                        break
+            except Exception:
+                pass
+
         search_start = time.perf_counter()
         original_memories = self._search_vector_store(
             query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired
@@ -3558,6 +3573,21 @@ class AsyncMemory(MemoryBase):
             depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
         if depth == "minimal":
             return {"results": []}
+
+        # Correction mode: detect user correction signals, widen search
+        if os.environ.get("MEM0_CORRECTION_MODE", "false").lower() == "true":
+            try:
+                cur = self.db.conn.execute(
+                    "SELECT keyword FROM search_keywords WHERE category='correction' AND match_type='contains'"
+                )
+                for (kw,) in cur.fetchall():
+                    if kw.lower() in query.lower():
+                        threshold = min(threshold, float(os.environ.get("MEM0_CORRECTION_THRESHOLD", "0.1")))
+                        limit = max(limit, int(os.environ.get("MEM0_CORRECTION_TOP_K", "30")))
+                        depth = "full"
+                        break
+            except Exception:
+                pass
 
         search_start = time.perf_counter()
         original_memories = await self._search_vector_store(
