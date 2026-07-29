@@ -1,7 +1,8 @@
-from typing import Optional
+from typing import Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
+from mem0.graphs.falkordb.config import FalkorDBConfig
 from mem0.llms.configs import LlmConfig
 
 
@@ -11,10 +12,10 @@ class MemoryGraphConfig(BaseModel):
 
 class GraphStoreConfig(BaseModel):
     provider: str = Field(
-        description="Provider of the graph store (e.g., 'memory')",
+        description="Provider of the graph store (e.g., 'memory', 'falkordb')",
         default="memory",
     )
-    config: Optional[MemoryGraphConfig] = Field(
+    config: Optional[Union[MemoryGraphConfig, FalkorDBConfig]] = Field(
         description="Configuration for the specific graph store", default=None
     )
     llm: Optional[LlmConfig] = Field(description="LLM configuration for querying the graph store", default=None)
@@ -34,7 +35,15 @@ class GraphStoreConfig(BaseModel):
     @field_validator("config")
     def validate_config(cls, v, values):
         provider = values.data.get("provider")
+        if v is None:
+            return None
         if provider == "memory":
             return MemoryGraphConfig(**v.model_dump())
+        elif provider == "falkordb":
+            if isinstance(v, FalkorDBConfig):
+                return v
+            if isinstance(v, dict):
+                return FalkorDBConfig(**v)
+            return FalkorDBConfig(**v.model_dump())
         else:
             raise ValueError(f"Unsupported graph store provider: {provider}")

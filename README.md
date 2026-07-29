@@ -1,6 +1,6 @@
 # mem0 + FalkorDB = 图增强记忆层
 
-> **基于 [mem0ai/mem0](https://github.com/mem0ai/mem0) v2.0.14 的 Fork** — 回迁了 v2.0.0 起被移除的 `graphs/` 模块，通过 [mem0-falkordb](https://github.com/FalkorDB/mem0-falkordb) 插件恢复外部图数据库集成。
+> **基于 [mem0ai/mem0](https://github.com/mem0ai/mem0) v2.0.14 的 Fork** — 回迁了 v2.0.0 起被移除的 `graphs/` 模块，内置 FalkorDB 图存储集成。补齐了自部署场景下缺失的记忆衰减、cron 清理等生产级能力。
 
 ## 为什么需要这个 Fork
 
@@ -23,14 +23,19 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **pgvector 维度** | 硬编码 1536 | ✅ 自动检测（切换 Embedder 模型自适应） |
 | **Provider 配置** | 需调 `/configure` API | ✅ `MEM0_CONFIG_PATH=/app/config.json` 即可 |
 | **生产部署** | 需手动注册 admin | ✅ 启动自动创建 admin@mem0.dev |
-| **性能调优** | 硬编码或不可配 | ✅ 18 个环境变量全覆盖（连接池/HTTP超时/批量/并发） |
+| **性能调优** | 硬编码或不可配 | ✅ 22 个环境变量全覆盖（连接池/HTTP超时/批量/并发/衰减/清理） |
 | **Docker 开箱** | 依赖手动安装系统包 | ✅ Dockerfile 预装 libpq5 |
 | **长消息内存** | 超长消息一次性传入 | ✅ `MEM0_LLM_MAX_INPUT_TOKENS` 自动分块提取 |
-| **Reranker 重排序** | SDK 有、Server API 未启用 | ✅ Server `/search` API 支持 rerank 参数，配置后自动生效 |
-| **中文记忆提取** | 英文 Prompt → 英文事实 | ✅ 全中文 system prompt（记忆+图实体+图关系三链路汉化），`sanitize_relationship_for_cypher` 支持 CJK |
-| **VoyageAI Embedder** | 仅 OpenAI 兼容 | ✅ 自动检测 `voyageai` base_url → `encoding_format: base64` + 跳过 `dimensions` + base64 解码 |
-| **SiliconFlow Reranker** | 无原生支持 | ✅ 新增 `siliconflow` provider，HTTP 直连 `/v1/rerank`，无需 Cohere SDK |
-| **mem0-falkordb 内置** | pip 安装，不兼容中文 Cypher 标签 | ✅ Vendor 到 `mem0/graphs/falkordb/`，entity/relation name 自动 sanitize 为 ASCII |
+|| **Reranker 重排序** | SDK 有、Server API 未启用 | ✅ Server `/search` API 支持 rerank 参数，配置后自动生效 |
+|| **中文记忆提取** | 英文 Prompt → 英文事实 | ✅ 全中文 system prompt（记忆+图实体+图关系三链路汉化），`sanitize_relationship_for_cypher` 支持 CJK |
+|| **VoyageAI Embedder** | 仅 OpenAI 兼容 | ✅ 自动检测 `voyageai` base_url → `encoding_format: base64` + 跳过 `dimensions` + base64 解码 |
+|| **SiliconFlow Reranker** | 无原生支持 | ✅ 新增 `siliconflow` provider，HTTP 直连 `/v1/rerank`，无需 Cohere SDK |
+|| **mem0-falkordb 内置** | pip 安装，不兼容中文 Cypher 标签 | ✅ Vendor 到 `mem0/graphs/falkordb/`，entity/relation name 自动 sanitize 为 ASCII |
+|| **FalkorDB 内建集成** | 需 `register()` 补丁激活 | ✅ `GraphStoreFactory` + `GraphStoreConfig` 内置，`register()` 不再需要 |
+|| **记忆衰减** | ❌ 无 | ✅ `MEM0_ENABLE_DECAY=true` 启用，半衰期可配，`importance=5` 豁免 |
+|| **cron 过期清理** | ❌ 无 | ✅ 每日凌晨自动清理过期/超期记忆 + FalkorDB 孤立节点，可配保留天数 |
+|| **时间推理** | ❌ 无 | ✅ LLM 提取时自动标注 PAST/PRESENT/FUTURE/TIMELESS，metadata 过滤 |
+|| **定期合并** | ❌ 无 | ✅ cron 按实体分组，LLM 合并 3+ 碎片为精炼事实 |
 
 ## 架构
 
@@ -71,16 +76,13 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 
 ## 📖 FalkorDB 图存储集成
 
-> 本 Fork 恢复了 graph_store 接口层，FalkorDB 图存储实现已 Vendor 内置在 `mem0/graphs/falkordb/`，无需额外 pip 依赖。
+> 本 Fork 已将 FalkorDB 直接编译进 `GraphStoreFactory`，无需 `register()` 补丁。配置 `graph_store.provider="falkordb"` 即可使用。
 
 详细的集成配置、Cypher 翻译对照、验证方法请参阅 → **[docs/falkordb-integration.md](docs/falkordb-integration.md)**
 
 简而言之：
 
 ```python
-from mem0.graphs.falkordb import register
-register()  # ⚠️ 必须在 Memory.from_config() 之前调用
-
 config = {
     "graph_store": {
         "provider": "falkordb",
@@ -180,9 +182,6 @@ docker run -d --rm -p 6379:6379 falkordb/falkordb
 ```
 
 ```python
-from mem0.graphs.falkordb import register
-register()  # 必须在 Memory.from_config() 之前调用
-
 from mem0 import Memory
 
 config = {
@@ -315,6 +314,47 @@ _is_voyage = "voyageai" in (self.config.openai_base_url or "")
 ```
 
 同时保留上游全部 Provider：Zero Entropy、Cohere、Sentence Transformer、HuggingFace、LLM-based。详见 [server/README.md#10-reranker-提供器选择](server/README.md#10-reranker-提供器选择)。
+
+### 记忆衰减
+
+上游无此功能。本 Fork 在搜索 pipeline 中增加了指数衰减：
+
+- `MEM0_ENABLE_DECAY=true` 启用
+- `MEM0_DECAY_HALF_LIFE_DAYS=30` 半衰期（默认 30 天）
+- `importance=5` 元数据标记豁免衰减（核心事实不衰减）
+- 纯数学运算，零 LLM 调用
+- threshold 比较用原始分数（不影响入选资格），排序用衰减后分数
+
+### cron 过期清理
+
+上游无此功能。本 Fork 提供自动清理脚本 + Hermes cronjob：
+
+- 每日凌晨 4:00 自动执行
+- `MEMORY_RETENTION_DAYS=180` 超期天数（默认 0 = 仅清除显式过期记录）
+- `PRUNE_DRY_RUN=true` 干跑模式
+- 同时清理 FalkorDB 孤立实体节点
+- 用户列表从向量存储 payload 自动发现
+
+### 时间推理
+
+上游无此功能。本 Fork 修改了 LLM 提取 prompt，每条记忆自动标注时间属性：
+
+- LLM 输出 `metadata.temporal` — PAST / PRESENT / FUTURE / TIMELESS
+- LLM 输出 `metadata.temporal_date` — 有明确日期时同时输出 ISO 日期
+- 搜索时可通过 `filters: {"metadata.temporal": "FUTURE"}` 过滤
+- 代码改动：`prompts.py`（LLM 输出格式）、`main.py`（metadata 合并）
+- 零额外 LLM 调用——在已有提取请求中附带
+
+### 定期合并
+
+上游无此功能。本 Fork 提供脚本 + cronjob，自动将碎片记忆合并为精简事实：
+
+- 每日凌晨 5:00 自动执行（Hermes cronjob）
+- 从 FalkorDB 读取实体节点，按实体名分组
+- 同组 ≥3 条记忆 → 调 LLM 合并为 1-3 条
+- 先 add 合并后记忆，再 delete 旧的（crash-safe）
+- FalkorDB 不可用时降级为关键词搜索分组
+- `CONSOLIDATION_DRY_RUN=true` 干跑，`CONSOLIDATION_MIN_GROUP=3` 分组阈值
 
 ## 环境要求
 

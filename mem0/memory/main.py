@@ -1075,6 +1075,12 @@ class Memory(MemoryBase):
             if mem.get("attributed_to"):
                 mem_metadata["attributed_to"] = mem["attributed_to"]
 
+            # Merge temporal metadata from LLM extraction
+            llm_meta = mem.get("metadata") or {}
+            for k in ("temporal", "temporal_date"):
+                if k in llm_meta:
+                    mem_metadata[k] = llm_meta[k]
+
             records.append((memory_id, text, embed_map[text], mem_metadata))
 
         if not records:
@@ -1740,6 +1746,24 @@ class Memory(MemoryBase):
                 "payload": payload,
             })
 
+        # Build decay function if enabled
+        if os.environ.get("MEM0_ENABLE_DECAY", "").lower() == "true":
+            _half_life = float(os.environ.get("MEM0_DECAY_HALF_LIFE_DAYS", "30"))
+            _now = datetime.now(timezone.utc)
+            def _decay_fn(payload):
+                if payload.get("importance") == 5:
+                    return 1.0
+                created = payload.get("created_at")
+                if not created:
+                    return 1.0
+                try:
+                    age_days = (_now - datetime.fromisoformat(created)).days
+                    return 0.5 ** (age_days / _half_life)
+                except (ValueError, TypeError):
+                    return 1.0
+        else:
+            _decay_fn = None
+
         # Step 8: Score and rank
         scored_results = score_and_rank(
             semantic_results=candidates,
@@ -1748,6 +1772,7 @@ class Memory(MemoryBase):
             threshold=threshold,
             top_k=limit,
             explain=explain,
+            decay_fn=_decay_fn,
         )
 
         # Step 9: Format results
@@ -2827,6 +2852,12 @@ class AsyncMemory(MemoryBase):
             if mem.get("attributed_to"):
                 mem_metadata["attributed_to"] = mem["attributed_to"]
 
+            # Merge temporal metadata from LLM extraction
+            llm_meta = mem.get("metadata") or {}
+            for k in ("temporal", "temporal_date"):
+                if k in llm_meta:
+                    mem_metadata[k] = llm_meta[k]
+
             records.append((memory_id, text, embed_map[text], mem_metadata))
 
         if not records:
@@ -3497,6 +3528,24 @@ class AsyncMemory(MemoryBase):
                 "payload": payload,
             })
 
+        # Build decay function if enabled
+        if os.environ.get("MEM0_ENABLE_DECAY", "").lower() == "true":
+            _half_life = float(os.environ.get("MEM0_DECAY_HALF_LIFE_DAYS", "30"))
+            _now = datetime.now(timezone.utc)
+            def _decay_fn(payload):
+                if payload.get("importance") == 5:
+                    return 1.0
+                created = payload.get("created_at")
+                if not created:
+                    return 1.0
+                try:
+                    age_days = (_now - datetime.fromisoformat(created)).days
+                    return 0.5 ** (age_days / _half_life)
+                except (ValueError, TypeError):
+                    return 1.0
+        else:
+            _decay_fn = None
+
         # Step 8: Score and rank
         scored_results = score_and_rank(
             semantic_results=candidates,
@@ -3505,6 +3554,7 @@ class AsyncMemory(MemoryBase):
             threshold=threshold,
             top_k=limit,
             explain=explain,
+            decay_fn=_decay_fn,
         )
 
         # Step 9: Format results

@@ -142,6 +142,8 @@ class TestScoreAndRank:
         details = scored[0]["score_details"]
         assert details == {
             "semantic_score": 0.8,
+            "decay_multiplier": 1.0,
+            "decayed_semantic": 0.8,
             "bm25_score": 0.6,
             "entity_boost": 0.3,
             "raw_score": pytest.approx(1.7),
