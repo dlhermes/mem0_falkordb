@@ -507,17 +507,24 @@ ADDITIVE_EXTRACTION_PROMPT = """
       "text": "在此处写自包含的事实陈述",
       "event": "ADD",
       "linked_memory_ids": ["existing-uuid-1"],
-      "attributed_to": "user"
+      "attributed_to": "user",
+      "metadata": {
+        "temporal": "PAST",
+        "temporal_date": "2026-03-10"
+      }
     }
   ]
-}
+ }
 
-## 字段说明
-- **id**（字符串，必填）：从"0"开始的连续数字
+**输出字段说明**：
+- **id**（字符串，必填）：唯一标识符，字符串格式
 - **text**（字符串，必填）：自包含、上下文丰富的事实陈述。必须包含足够的独立上下文（不要依赖外部信息就能理解）。【关键】必须用与输入相同的语言。
 - **event**（字符串，必填）：始终为"ADD"
 - **linked_memory_ids**（字符串数组，可选）：相关现有记忆的UUID
 - **attributed_to**（字符串，必填）：记忆归属。"user"用于用户陈述的事实，"assistant"用于助手提供的信息
+- **metadata**（对象，必填）：每条记忆的元信息。必须包含 temporal 字段。
+  - **temporal**（字符串，必填）：事实的时间属性。PAST（过去发生的）、PRESENT（当前状态/持续中）、FUTURE（计划/未来事件）或 TIMELESS（无时效的通用知识）。基于当前日期和消息内容判断。
+  - **temporal_date**（字符串，可选）：事实发生的日期，ISO 格式 yyyy-MM-dd。仅在有明确日期时输出。
 
 ## 规则（Rules）
 - 将每一条值得记住的信息提取为独立记忆对象

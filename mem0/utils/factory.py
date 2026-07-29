@@ -284,6 +284,7 @@ class RerankerFactory:
 class GraphStoreFactory:
     provider_to_class = {
         "memory": "mem0.graphs.memory.MemoryGraph",
+        "falkordb": "mem0.graphs.falkordb.graph_memory.MemoryGraph",
     }
 
     @classmethod

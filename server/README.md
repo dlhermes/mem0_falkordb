@@ -262,6 +262,27 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 | `MEM0_RERANK_MAX_RETRIES` | SDK 默认 | Cohere / ZeroEntropy 客户端最大重试次数 |
 | `MEM0_RERANK_REQUEST_DELAY` | `0` | LLMReranker 逐文档调 LLM 时每次请求间隔（秒），防 RPM 限制 |
 
+### 记忆衰减
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_ENABLE_DECAY` | `false` | `true` 时启用搜索时指数衰减 |
+| `MEM0_DECAY_HALF_LIFE_DAYS` | `30` | 半衰期天数，`importance=5` 的记忆豁免 |
+
+### 记忆清理
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEMORY_RETENTION_DAYS` | `0` | 超期记忆删除天数（0 = 仅清除设了 expiration_date 的记忆） |
+| `PRUNE_DRY_RUN` | `false` | `true` 时只报告不删除 |
+
+### 定期合并
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `CONSOLIDATION_DRY_RUN` | `false` | `true` 时只报告不合并 |
+| `CONSOLIDATION_MIN_GROUP` | `3` | 触发合并的最小记忆条数 |
+
 示例 `.env` 配置：
 
 ```bash
@@ -335,6 +356,32 @@ docker exec -it mem0-mem0-1 python3 /app/scripts/reset_admin_password.py
 ```bash
 docker exec -it mem0-mem0-1 python3 /app/scripts/prune_request_logs.py
 ```
+
+## 记忆清理
+
+过期记忆和 FalkorDB 孤立节点自动清理（每日凌晨 4:00 由 cron 触发）。也可手动执行：
+
+```bash
+# 干跑（只报告不删除）
+docker exec -e PRUNE_DRY_RUN=true -e MEM0_CONFIG_PATH=/app/config.json -e MEMORY_RETENTION_DAYS=180 mem0-dev-mem0-1 python3 /app/prune_expired_memories.py
+
+# 实际执行
+docker exec -e MEM0_CONFIG_PATH=/app/config.json -e MEMORY_RETENTION_DAYS=180 mem0-dev-mem0-1 python3 /app/prune_expired_memories.py
+```
+
+## 记忆合并
+
+碎片记忆按实体分组，≥3 条时自动合并为精简事实（每日凌晨 5:00 由 cron 触发）。手动执行：
+
+```bash
+# 干跑
+docker exec -e CONSOLIDATION_DRY_RUN=true -e MEM0_CONFIG_PATH=/app/config.json mem0-dev-mem0-1 python3 /app/consolidate_memories.py
+
+# 实际执行
+docker exec -e MEM0_CONFIG_PATH=/app/config.json mem0-dev-mem0-1 python3 /app/consolidate_memories.py
+```
+
+## 时间推理
 
 ## 本地访问地址
 

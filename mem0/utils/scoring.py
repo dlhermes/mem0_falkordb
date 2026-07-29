@@ -10,7 +10,7 @@ Provides:
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 
 def get_bm25_params(query: str, *, lemmatized: Optional[str] = None) -> tuple:
@@ -64,15 +64,20 @@ def score_and_rank(
     threshold: float,
     top_k: int,
     explain: bool = False,
+    decay_fn: Optional[Callable[[Dict], float]] = None,
 ) -> List[Dict[str, Any]]:
     """Score candidates additively and return top-k results.
 
     For each candidate:
         semantic_score is taken from the result's score field.
-        combined = (semantic + bm25 + entity_boost) / max_possible
+        combined = (decayed_semantic + bm25 + entity_boost) / max_possible
 
-    Threshold gates the semantic score BEFORE combining -- candidates
-    below the threshold are excluded even if BM25/entity would boost them.
+    Threshold gates the original semantic_score BEFORE combining and before
+    decay -- candidates below threshold are excluded regardless of decay.
+
+    When decay_fn is provided, the semantic score is multiplied by the decay
+    multiplier (from the payload) before combining. decay_fn receives the
+    full payload dict and returns a multiplier in [0, 1].
 
     The divisor adapts based on which signals are active:
         - Semantic only: max_possible = 1.0
@@ -115,7 +120,12 @@ def score_and_rank(
         bm25_score = bm25_scores.get(mem_id_str, 0.0)
         entity_boost = entity_boosts.get(mem_id_str, 0.0)
 
-        raw_combined = semantic_score + bm25_score + entity_boost
+        decay_multiplier = 1.0
+        if decay_fn is not None:
+            decay_multiplier = decay_fn(result.get("payload", {}))
+        decayed_semantic = semantic_score * decay_multiplier
+
+        raw_combined = decayed_semantic + bm25_score + entity_boost
         combined = min(raw_combined / max_possible, 1.0)
 
         scored_result = {
@@ -126,6 +136,8 @@ def score_and_rank(
         if explain:
             scored_result["score_details"] = {
                 "semantic_score": semantic_score,
+                "decay_multiplier": decay_multiplier,
+                "decayed_semantic": decayed_semantic,
                 "bm25_score": bm25_score,
                 "entity_boost": entity_boost,
                 "raw_score": raw_combined,
