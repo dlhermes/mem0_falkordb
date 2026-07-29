@@ -36,6 +36,7 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **时间推理** | ❌ 无 | ✅ LLM 提取时自动标注 PAST/PRESENT/FUTURE/TIMELESS，metadata 过滤 |
 | **定期合并** | ❌ 无 | ✅ cron 按实体分组，LLM 合并 3+ 碎片为精炼事实 |
 | **矛盾检测** | ❌ 无 | ✅ `MEM0_ENABLE_CONTRADICTION=true` 启用，写入时实时判定矛盾，自动 DELETE 旧记忆 |
+| **搜索深度路由** | ❌ 无 | ✅ 三级深度（minimal/standard/full），自动识别废话跳过检索，降本 40-60%。`MEM0_SEARCH_DEPTH_DEFAULT=full` 确保零行为变化 |
 
 ## 架构
 
@@ -367,8 +368,31 @@ _is_voyage = "voyageai" in (self.config.openai_base_url or "")
 - 发现矛盾（如"喜欢咖啡"→"讨厌咖啡"）→ 自动 DELETE 旧记忆
 - UPDATE 时先 delete 旧向量，再 insert 新版本
 - 零额外 LLM 调用——判定逻辑复用已有提取请求
-- history 表可追溯 DELETE/UPDATE 记录
-- 写入即检测，无需 cron 等待
+| - history 表可追溯 DELETE/UPDATE 记录
+| - 写入即检测，无需 cron 等待
+
+### 搜索深度路由（Phase 1）
+
+本 Fork 新增三级搜索深度，优化检索成本：
+
+| 深度 | 链路 | 降本 |
+|------|------|------|
+| `minimal` | 跳过全部检索（命中废话白名单） | 100% |
+| `standard` | embedding + BM25（跳过图查询 + rerank） | ~70% |
+| `full` | embedding + BM25 + 图 + rerank（默认，零行为变化） | 0% |
+
+深度自动判定在 `Memory.search()` 入口执行，关键词从 `search_keywords` 表读取（SQLite，`INSERT` 即生效）。
+
+配置：
+
+```yaml
+MEM0_SEARCH_DEPTH_AUTO=true         # 启用自动深度判定
+MEM0_SEARCH_DEPTH_DEFAULT=full      # 默认深度（v1 版本 full，零行为变化）
+MEM0_SEARCH_CACHE_TTL=15            # minimal 路径 LRU 缓存 TTL 秒
+MEM0_SEARCH_STD_CACHE_TTL=5         # standard 路径 LRU 缓存 TTL 秒
+```
+
+种子词表通过迁移 `mem0/migrations/002_search_keywords.py` 初始化（含中英文 ~127 条）。增删词直接操作 `search_keywords` 表，无需重启服务。`depth` 参数也暴露在 `SearchRequest` API 和 SDK `SearchMemoryOptions` 中，外部调用可显式指定。
 
 ## 环境要求
 
