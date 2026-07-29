@@ -9,7 +9,7 @@
 | Phase | 功能 | 状态 | 说明 |
 |-------|------|------|------|
 | **Phase 1** | 相关性自适应检索深度 | ✅ **已完成** | 三级深度路由 + resolve_search_depth 关键词 DB 匹配 + LRU 缓存。已部署 10.200.1.163 |
-| **Phase 2** | Lane 分轨衰减 | 🔄 待实施 | 见 §1 |
+| **Phase 2** | Lane 分轨衰减 | ✅ **已完成** | LLM 提取 + importance/lane 双字段 + _decay_fn lane multiplier + 3档衰减速度 |
 | **Phase 3** | 用户纠正感知 | ⏳ 待排期 | 见 §3 |
 
 ---

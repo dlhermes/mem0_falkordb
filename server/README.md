@@ -417,6 +417,17 @@ docker exec mem0-dev-mem0-1 sqlite3 /root/.mem0/history.db \
   "INSERT OR IGNORE INTO search_keywords (category, keyword, match_type, lang) VALUES ('minimal', '收到', 'exact', 'zh')"
 ```
 
+## Lane 分轨衰减
+
+LLM 提取记忆时自动判断 `importance` 和 `lane`（在现有 entity extraction prompt 中扩展，不增加额外 LLM 调用）：
+
+- `importance=5` → 永不衰减（身份/偏好/关键决策）
+- `lane=slow` → 0.3x 速度（~100 天半衰期，经验/流程/规则）
+- `lane=normal` → 1.0x 速度（~30 天半衰期，一般知识）
+- `lane=fast` → 1.5x 速度（~20 天半衰期，情绪/临时内容）
+
+启用 `MEM0_ENABLE_DECAY=true` 即可。Lane 乘数自动作用于现有衰减公式。存量记忆无 lane 字段=normal（零行为变化）。
+
 ## 本地访问地址
 
 - Dashboard: `http://localhost:3002`

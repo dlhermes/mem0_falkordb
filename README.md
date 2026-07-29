@@ -31,7 +31,7 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **VoyageAI Embedder** | 仅 OpenAI 兼容 | ✅ 自动检测 `voyageai` base_url → `encoding_format: base64` + 跳过 `dimensions` + base64 解码 |
 | **SiliconFlow Reranker** | 无原生支持 | ✅ 新增 `siliconflow` provider，HTTP 直连 `/v1/rerank` |
 | **FalkorDB 内建集成** | 需 `register()` 补丁激活 | ✅ `GraphStoreFactory` + `GraphStoreConfig` 内置，即配即用 |
-| **记忆衰减** | ❌ 无 | ✅ `MEM0_ENABLE_DECAY=true` 启用，半衰期可配，`importance=5` 豁免 |
+| **记忆衰减** | ❌ 无 | ✅ `MEM0_ENABLE_DECAY=true` 启用，半衰期可配，`importance=5` 豁免，Lane 分轨（slow/normal/fast三段速度） |
 | **cron 过期清理** | ❌ 无 | ✅ 每日自动清理过期记忆 + FalkorDB 孤立节点，保留天数可配 |
 | **时间推理** | ❌ 无 | ✅ LLM 提取时自动标注 PAST/PRESENT/FUTURE/TIMELESS，metadata 过滤 |
 | **定期合并** | ❌ 无 | ✅ cron 按实体分组，LLM 合并 3+ 碎片为精炼事实 |
@@ -393,6 +393,19 @@ MEM0_SEARCH_STD_CACHE_TTL=5         # standard 路径 LRU 缓存 TTL 秒
 ```
 
 种子词表通过迁移 `mem0/migrations/002_search_keywords.py` 初始化（含中英文 ~127 条）。增删词直接操作 `search_keywords` 表，无需重启服务。`depth` 参数也暴露在 `SearchRequest` API 和 SDK `SearchMemoryOptions` 中，外部调用可显式指定。
+
+### Lane 分轨衰减（Phase 2）
+
+本 Fork 完善了记忆衰减机制，LLM 提取时自动判断 `importance` 和 `lane`：
+
+```
+importance=5 → 永不衰减（身份/偏好/关键决策）
+lane=slow    → 0.3x 衰减速度（~100天半衰期，经验/流程）
+lane=normal  → 1.0x 基准衰减（~30天半衰期，一般知识）
+lane=fast    → 1.5x 衰减速度（~20天半衰期，情绪/临时）
+```
+
+启用：`MEM0_ENABLE_DECAY=true` 即可，Lane 乘数自动作用于现有衰减公式。存量记忆无 lane 字段 = normal 行为。
 
 ## 环境要求
 
