@@ -431,15 +431,33 @@ def _payload_is_expired(payload: Optional[Dict[str, Any]]) -> bool:
         return False
 
 
-def resolve_search_depth(query: str) -> str:
+def resolve_search_depth(query: str, db_conn=None) -> str:
     """Determine search depth based on query characteristics.
 
-    Current version returns the default depth. Detailed heuristics
-    (keyword matching, long-query detection) are deferred to Phase 2.
+    Checks query against keywords loaded from search_keywords table.
+    Falls back to env var default on failure.
     """
-    if len(query) < 2:
+    stripped = query.strip()
+    if len(stripped) < 2:
         return "minimal"
-    # TODO: Phase 2 — keyword matching and long-query detection heuristics
+
+    if db_conn is not None:
+        try:
+            cursor = db_conn.execute(
+                "SELECT keyword, category, match_type FROM search_keywords"
+            )
+            for keyword, category, match_type in cursor.fetchall():
+                if match_type == "exact" and stripped == keyword:
+                    if category == "correction":
+                        return "full"
+                    return category
+                if match_type == "contains" and keyword in stripped:
+                    if category == "correction":
+                        return "full"
+                    return category
+        except Exception:
+            pass
+
     return os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
 
 
@@ -492,6 +510,7 @@ class Memory(MemoryBase):
         self.db = SQLiteManager(self.config.history_db_path)
         self.collection_name = self.config.vector_store.config.collection_name
         self.api_version = self.config.version
+        self._search_depth_cache = {}
         self.custom_instructions = self.config.custom_instructions
 
         # Initialize reranker if configured
@@ -551,6 +570,13 @@ class Memory(MemoryBase):
             )
 
         capture_event("mem0.init", self, {"sync_type": "sync"})
+
+    def _resolve_depth(self, query, depth):
+        if not self.config.enable_search_depth:
+            return os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
+        if depth:
+            return depth
+        return resolve_search_depth(query, db_conn=self.db.conn)
 
     @property
     def project(self):
@@ -1627,7 +1653,7 @@ class Memory(MemoryBase):
         )
 
         if os.environ.get("MEM0_SEARCH_DEPTH_AUTO", "true").lower() == "true":
-            depth = depth or resolve_search_depth(query)
+            depth = self._resolve_depth(query, depth)
         else:
             depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
         if depth == "minimal":
@@ -2368,6 +2394,7 @@ class AsyncMemory(MemoryBase):
         self.db = SQLiteManager(self.config.history_db_path)
         self.collection_name = self.config.vector_store.config.collection_name
         self.api_version = self.config.version
+        self._search_depth_cache = {}
         self.custom_instructions = self.config.custom_instructions
         self._entity_store = None
         self._executor = concurrent.futures.ThreadPoolExecutor(
@@ -2407,6 +2434,13 @@ class AsyncMemory(MemoryBase):
             )
 
         capture_event("mem0.init", self, {"sync_type": "async"})
+
+    def _resolve_depth(self, query, depth):
+        if not self.config.enable_search_depth:
+            return os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
+        if depth:
+            return depth
+        return resolve_search_depth(query, db_conn=self.db.conn)
 
     @property
     def project(self):
@@ -3481,7 +3515,7 @@ class AsyncMemory(MemoryBase):
         )
 
         if os.environ.get("MEM0_SEARCH_DEPTH_AUTO", "true").lower() == "true":
-            depth = depth or resolve_search_depth(query)
+            depth = self._resolve_depth(query, depth)
         else:
             depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
         if depth == "minimal":
