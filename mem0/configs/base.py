@@ -92,6 +92,10 @@ class MemoryConfig(BaseModel):
         description="Enable lane-based decay multiplier",
         default=False,
     )
+    correction_mode: bool = Field(
+        description="Enable user correction detection in search — lowers threshold and expands top_k when query matches correction keywords",
+        default=False,
+    )
 
 
 class AzureConfig(BaseModel):

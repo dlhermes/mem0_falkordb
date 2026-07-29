@@ -341,11 +341,6 @@ MEM0_ENABLE_DECAY=true              # 启用衰减（默认关）
 MEM0_DECAY_HALF_LIFE_DAYS=30        # 基准半衰期（Lane multiplier 在此基础上缩放）
 ```
 
-**注意：**
-- importance=5 元数据标记豁免衰减（核心事实不衰减）——之前是死代码（无人写入），Phase 2 补全了 LLM 写入路径
-- threshold 比较用原始分数（不影响入选资格），排序用衰减后分数
-- ⚠️ 仅限搜索排序：`project.update(decay=True)` 和定时衰减调度（Platform 版功能）暂不可用
-
 ### cron 过期清理
 
 上游无此功能。本 Fork 提供自动清理脚本 + Hermes cronjob：
