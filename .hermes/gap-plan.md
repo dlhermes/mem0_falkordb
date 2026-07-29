@@ -400,6 +400,23 @@ MEM0_ENABLE_CONTRADICTION=false  # 默认关闭。置 true 启用 UPDATE 模式
 
 **依赖**：无。temporal 字段已在 `ADDITIVE_EXTRACTION_PROMPT` 中实现（prompts.py:526-527），UPDATE prompt 复用同一 LLM 调用，不受影响。
 
+**⚠️ 已知 Gap：单条 DELETE 后 FalkorDB 图孤儿节点**
+
+审计发现：`_delete_memory()`（main.py:2186）只清理向量库 + entity store + history，**不清理 FalkorDB 图**。
+
+| 删除路径 | 图清理 |
+|----------|--------|
+| `delete(memory_id)` → Server `DELETE /memories/{id}` | ✗ |
+| `delete_all(user_id)` → Server `DELETE /memories?user_id=X` | ✓ |
+| `reset()` | ✓ |
+| prune 脚本 | ✗（但后续 `cleanup_orphans()` 补偿） |
+
+UPDATE 模式产生的 DELETE 走的是第一条路径，会留孤儿节点。
+
+**影响**：孤儿节点仅为实体标签（不含记忆文本），不影响搜索结果。cron #3b 每日 `cleanup_orphans()` 通过 `MATCH (n) WHERE size((n)--()) = 0 DETACH DELETE n` 自动清理。
+
+**是否需要修复**：暂不。理由：① 影响极小（仅实体标签，非记忆数据）；② 24h 内 cron 自动清理；③ 图存储无单节点删除 API，实现需新增 Cypher 操作，增加复杂度。后续如有需要，可在 `_delete_memory` 末尾追加 `self.graph.delete_entity_node(memory_id)` 调用。
+
 
 ## 三、架构决策
 
