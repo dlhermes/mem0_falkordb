@@ -397,6 +397,20 @@ cd /data/mem0-push/server && docker compose up -d --force-recreate mem0
 
 ## 时间推理
 
+LLM 在提取记忆时自动标注时间属性，写入 metadata 的 `temporal` 和 `temporal_date` 字段：
+
+- **`temporal`** — 时间类型：`PAST`（过去）、`PRESENT`（现在/当前）、`FUTURE`（未来/计划）、`TIMELESS`（无时效通用知识）
+- **`temporal_date`** — 具体日期（ISO 格式，如 `2026-07-30`），无法推断时省略
+
+**过滤方式：**
+
+```bash
+# 搜索时按 temporal 筛选（通过 metadata filter，值需大写）
+curl -s -X POST http://localhost:8080/search \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id": "alice", "query": "...", "metadata_filters": {"temporal": "FUTURE"}}'
+```
+
 ## 搜索深度路由
 
 `/search` 端点新增可选参数 `depth`（minimal/standard/full）：
@@ -404,6 +418,8 @@ cd /data/mem0-push/server && docker compose up -d --force-recreate mem0
 - `minimal` — 跳过全部检索（命中废话白名单时）
 - `standard` — 仅向量+BM25，跳过图查询和 rerank
 - `full` — 完整检索（默认值，行为不变）
+
+**启用方式：** `config.json` 中设置 `enable_search_depth: true`（模板已默认开启）。未设置时所有查询走 `full` 深度，无降本效果。`MEM0_SEARCH_DEPTH_AUTO=true`（环境变量，默认 true）控制是否自动判定深度，关闭后可手动通过 `depth` 参数指定。
 
 关键词管理：通过 `search_keywords` 表（SQLite）管理，`INSERT` 即生效，无需重启。
 
@@ -420,6 +436,8 @@ docker exec mem0-dev-mem0-1 sqlite3 /root/.mem0/history.db \
 ## 记忆衰减（含 Lane 分轨）
 
 LLM 提取记忆时自动判断 `importance` 和 `lane`，一条 `MEM0_ENABLE_DECAY=true` 启用全部：
+
+**启用方式：** `config.json` 中设置 `enable_lane: true`（模板已默认开启），开启后 LLM 未输出 lane 时按关键词自动分轨。`MEM0_ENABLE_DECAY=true`（环境变量）开启搜索时的指数衰减加权。
 
 | 档位 | half_life | 触发条件 |
 |------|-----------|---------|

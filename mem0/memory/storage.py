@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from mem0.migrations import _002_search_keywords
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,6 +18,7 @@ class SQLiteManager:
         self._migrate_history_table()
         self._create_history_table()
         self._create_messages_table()
+        self._run_migrations()
 
     def _migrate_history_table(self) -> None:
         """
@@ -146,6 +149,13 @@ class SQLiteManager:
                 self.connection.execute("ROLLBACK")
                 logger.error(f"Failed to create messages table: {e}")
                 raise
+
+    def _run_migrations(self) -> None:
+        with self._lock:
+            try:
+                _002_search_keywords.run(self.connection)
+            except Exception as e:
+                logger.warning(f"_002_search_keywords migration skipped: {e}")
 
     def add_history(
         self,

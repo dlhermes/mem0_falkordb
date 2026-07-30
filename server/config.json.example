@@ -33,5 +33,8 @@
       "database": "mem0"
     }
   },
+  "enable_search_depth": true,
+  "enable_lane": true,
+  "correction_mode": true,
   "custom_instructions": "提取事实时，为每条记忆标注时间属性：\n- PAST: 已发生的事件（如\"昨天去了医院\"）\n- PRESENT: 当前状态（如\"住在北京\"）\n- FUTURE: 计划/意图（如\"下周要去东京\"）\n- TIMELESS: 永恒事实（如\"姓名是张三\"）\n\n将 temporal 值写入 metadata.temporal 字段。\n如果有明确日期，同时写入 metadata.temporal_date（ISO 格式 yyyy-MM-dd）。\n"
 }
