@@ -1,32 +1,14 @@
-# Mintlify Starter Kit
+# mem0 + FalkorDB 文档
 
-Click on `Use this template` to copy the Mintlify starter kit. The starter kit contains examples including
+> 本目录包含 mem0_falkordb 项目的补充文档。
 
-- Guide pages
-- Navigation
-- Customizations
-- API Reference pages
-- Use of popular components
+## 文档索引
 
-### Development
+| 文档 | 说明 |
+|------|------|
+| [falkordb-integration.md](falkordb-integration.md) | FalkorDB 图存储集成指南 — 架构、配置、验证步骤 |
 
-Install the [Mintlify CLI](https://www.npmjs.com/package/mintlify) to preview the documentation changes locally. To install, use the following command
+## 项目主文档
 
-```
-npm i -g mintlify
-```
-
-Run the following command at the root of your documentation (where mint.json is)
-
-```
-mintlify dev
-```
-
-### Publishing Changes
-
-Install our GitHub App to auto-propagate changes from your repo to your deployment. Changes will be deployed to production automatically after pushing to the default branch. Find the link to install on your dashboard. 
-
-#### Troubleshooting
-
-- Mintlify dev isn't running - Run `mintlify install` it'll re-install dependencies.
-- Page loads as a 404 - Make sure you are running in a folder with `mint.json`
+- **[项目 README](../README.md)** — 功能特性、架构、部署方式、环境变量
+- **[Server README](../server/README.md)** — Server 部署运维手册（Docker Compose、API、排障）

@@ -23,7 +23,7 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **pgvector 维度** | 硬编码 1536 | ✅ 自动检测（切换 Embedder 模型自适应） |
 | **Provider 配置** | 需调 `/configure` API | ✅ `MEM0_CONFIG_PATH=/app/config.json` 即可 |
 | **生产部署** | 需手动注册 admin | ✅ 启动自动创建 admin@mem0.dev |
-| **性能调优** | 硬编码或不可配 | ✅ 22 个环境变量全覆盖（连接池/HTTP超时/批量/并发/衰减/清理） |
+| **性能调优** | 硬编码或不可配 | ✅ 41 个环境变量全覆盖（连接池/HTTP超时/批量/并发/衰减/清理/纠正/深度路由） |
 | **Docker 开箱** | 依赖手动安装系统包 | ✅ Dockerfile 预装 libpq5 |
 | **长消息内存** | 超长消息一次性传入 | ✅ `MEM0_LLM_MAX_INPUT_TOKENS` 自动分块提取 |
 | **Reranker 重排序** | SDK 有、Server API 未启用 | ✅ Server `/search` API 支持 rerank 参数，配置后自动生效 |
@@ -426,7 +426,7 @@ MEM0_SEARCH_CACHE_TTL=15            # minimal 路径 LRU 缓存 TTL 秒
 MEM0_SEARCH_STD_CACHE_TTL=5         # standard 路径 LRU 缓存 TTL 秒
 ```
 
-种子词表通过迁移 `mem0/migrations/002_search_keywords.py` 初始化（含中英文 ~127 条）。增删词直接操作 `search_keywords` 表，无需重启服务。`depth` 参数也暴露在 `SearchRequest` API 和 SDK `SearchMemoryOptions` 中，外部调用可显式指定。
+种子词表通过迁移 `mem0/migrations/_002_search_keywords.py` 初始化（含中英文 ~140 条，分 minimal/standard/full/correction 四类）。增删词直接操作 `search_keywords` 表，无需重启服务。`depth` 参数也暴露在 `SearchRequest` API 和 SDK `SearchMemoryOptions` 中，外部调用可显式指定。
 
 ## 环境要求
 

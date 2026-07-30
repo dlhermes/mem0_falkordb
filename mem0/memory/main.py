@@ -8,6 +8,7 @@ import os
 import time
 import uuid
 import warnings
+from collections import OrderedDict
 from copy import deepcopy
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional
@@ -80,6 +81,9 @@ from mem0.vector_stores.base import VectorStoreBase
 # Suppress SWIG deprecation warnings globally
 warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*SwigPy.*")
 warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*swigvarlink.*")
+
+# Search depth cache max entries (prevents unbounded memory growth)
+_SEARCH_DEPTH_CACHE_MAX = 512
 
 # Initialize logger early for util functions
 logger = logging.getLogger(__name__)
@@ -435,6 +439,7 @@ def resolve_search_depth(query: str, db_conn=None) -> str:
     """Determine search depth based on query characteristics.
 
     Checks query against keywords loaded from search_keywords table.
+    Collects all matched categories, resolves by semantic priority.
     Falls back to env var default on failure.
     """
     stripped = query.strip()
@@ -446,15 +451,21 @@ def resolve_search_depth(query: str, db_conn=None) -> str:
             cursor = db_conn.execute(
                 "SELECT keyword, category, match_type FROM search_keywords"
             )
+            matched = set()
             for keyword, category, match_type in cursor.fetchall():
                 if match_type == "exact" and stripped == keyword:
-                    if category == "correction":
-                        return "full"
-                    return category
-                if match_type == "contains" and keyword in stripped:
-                    if category == "correction":
-                        return "full"
-                    return category
+                    matched.add(category)
+                elif match_type == "contains" and keyword in stripped:
+                    matched.add(category)
+            # Priority: correction > full > standard > minimal
+            if "correction" in matched:
+                return "full"
+            if "full" in matched:
+                return "full"
+            if "standard" in matched:
+                return "standard"
+            if "minimal" in matched:
+                return "minimal"
         except Exception:
             pass
 
@@ -510,7 +521,7 @@ class Memory(MemoryBase):
         self.db = SQLiteManager(self.config.history_db_path)
         self.collection_name = self.config.vector_store.config.collection_name
         self.api_version = self.config.version
-        self._search_depth_cache = {}
+        self._search_depth_cache = OrderedDict()
         self.custom_instructions = self.config.custom_instructions
 
         # Initialize reranker if configured
@@ -576,7 +587,7 @@ class Memory(MemoryBase):
             return os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
         if depth:
             return depth
-        return resolve_search_depth(query, db_conn=self.db.conn)
+        return resolve_search_depth(query, db_conn=self.db.connection)
 
     @property
     def project(self):
@@ -838,6 +849,7 @@ class Memory(MemoryBase):
         """
         if timestamp is not None:
             raise ValueError(get_temporal_feature_error_message("sync", "add", "timestamp"))
+        self._search_depth_cache.clear()
 
         normalized_expiration_date = _normalize_expiration_date(expiration_date)
         temporal_usage_notice = detect_temporal_usage_from_metadata(metadata)
@@ -1070,22 +1082,23 @@ class Memory(MemoryBase):
             return []
 
         # Phase 2.5: Lane keyword fallback (when LLM didn't output lane)
-        for mem in extracted_memories:
-            if not isinstance(mem, dict):
-                continue
-            meta = mem.get("metadata")
-            if meta and meta.get("lane"):
-                continue  # LLM already set lane, skip fallback
-            text = (mem.get("text") or "").lower()
-            lane = "normal"
-            if any(kw in text for kw in ["踩坑", "报错", "修复", "错误", "教训", "注意", "必须", "禁止", "铁律", "规定", "步骤", "流程", "配置", "怎么做", "如何操作"]):
-                lane = "slow"
-            elif any(kw in text for kw in ["开心", "难过", "心情", "感觉", "失望", "兴奋", "今天", "刚才", "刚刚", "临时", "突然"]):
-                lane = "fast"
-            if meta is None:
-                mem["metadata"] = {"lane": lane}
-            else:
-                meta["lane"] = lane
+        if self.config.enable_lane:
+            for mem in extracted_memories:
+                if not isinstance(mem, dict):
+                    continue
+                meta = mem.get("metadata")
+                if meta and meta.get("lane"):
+                    continue  # LLM already set lane, skip fallback
+                text = (mem.get("text") or "").lower()
+                lane = "normal"
+                if any(kw in text for kw in ["踩坑", "报错", "修复", "错误", "教训", "注意", "必须", "禁止", "铁律", "规定", "步骤", "流程", "配置", "怎么做", "如何操作"]):
+                    lane = "slow"
+                elif any(kw in text for kw in ["开心", "难过", "心情", "感觉", "失望", "兴奋", "今天", "刚才", "刚刚", "临时", "突然"]):
+                    lane = "fast"
+                if meta is None:
+                    mem["metadata"] = {"lane": lane}
+                else:
+                    meta["lane"] = lane
 
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
@@ -1139,7 +1152,7 @@ class Memory(MemoryBase):
                         mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
                         mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
                         llm_meta = mem.get("metadata") or {}
-                        for k in ("temporal", "temporal_date"):
+                        for k in ("temporal", "temporal_date", "importance", "lane"):
                             if k in llm_meta:
                                 mem_metadata_update[k] = llm_meta[k]
                         update_records.append((str(real_id), text, embed_map[text], mem_metadata_update))
@@ -1167,7 +1180,7 @@ class Memory(MemoryBase):
 
             # Merge temporal metadata from LLM extraction
             llm_meta = mem.get("metadata") or {}
-            for k in ("temporal", "temporal_date"):
+            for k in ("temporal", "temporal_date", "importance", "lane"):
                 if k in llm_meta:
                     mem_metadata[k] = llm_meta[k]
 
@@ -1674,13 +1687,26 @@ class Memory(MemoryBase):
             depth = self._resolve_depth(query, depth)
         else:
             depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
+        _min_ttl = int(os.environ.get("MEM0_SEARCH_CACHE_TTL", "0"))
+        _std_ttl = int(os.environ.get("MEM0_SEARCH_STD_CACHE_TTL", "0"))
+        _cache_key = (query, json.dumps(effective_filters, sort_keys=True, default=str))
+
         if depth == "minimal":
+            if _min_ttl > 0:
+                _cached = self._search_depth_cache.get(_cache_key)
+                if _cached and (time.perf_counter() - _cached[0]) < _min_ttl:
+                    return _cached[1]
+                _empty_result = {"results": []}
+                self._search_depth_cache[_cache_key] = (time.perf_counter(), _empty_result)
+                if len(self._search_depth_cache) > _SEARCH_DEPTH_CACHE_MAX:
+                    self._search_depth_cache.popitem(last=False)
+                return _empty_result
             return {"results": []}
 
         # Correction mode: detect user correction signals, widen search
-        if os.environ.get("MEM0_CORRECTION_MODE", "false").lower() == "true":
+        if self.config.correction_mode or os.environ.get("MEM0_CORRECTION_MODE", "false").lower() == "true":
             try:
-                cur = self.db.conn.execute(
+                cur = self.db.connection.execute(
                     "SELECT keyword FROM search_keywords WHERE category='correction' AND match_type='contains'"
                 )
                 for (kw,) in cur.fetchall():
@@ -1692,13 +1718,20 @@ class Memory(MemoryBase):
             except Exception:
                 pass
 
+        if depth == "standard" and _std_ttl > 0:
+            _cached = self._search_depth_cache.get(_cache_key)
+            if _cached and (time.perf_counter() - _cached[0]) < _std_ttl:
+                return _cached[1]
+
         search_start = time.perf_counter()
         original_memories = self._search_vector_store(
             query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired
         )
         search_elapsed_seconds = time.perf_counter() - search_start
 
-        if depth == "full":
+        if depth == "standard":
+            pass  # vector-only, no graph or rerank
+        elif depth == "full":
             # Merge graph search results if graph store is enabled
             if self.graph:
                 try:
@@ -1735,7 +1768,13 @@ class Memory(MemoryBase):
             )
         else:
             display_first_run_notice(self, "sync", "search")
-        return {"results": original_memories}
+
+        _results = {"results": original_memories}
+        if depth == "standard" and _std_ttl > 0:
+            self._search_depth_cache[_cache_key] = (time.perf_counter(), _results)
+            if len(self._search_depth_cache) > _SEARCH_DEPTH_CACHE_MAX:
+                self._search_depth_cache.popitem(last=False)
+        return _results
 
     def _process_metadata_filters(self, metadata_filters: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1897,13 +1936,20 @@ class Memory(MemoryBase):
             _half_life = float(os.environ.get("MEM0_DECAY_HALF_LIFE_DAYS", "30"))
             _now = datetime.now(timezone.utc)
             def _decay_fn(payload):
-                if payload.get("importance") == 5:
-                    return 1.0
+                try:
+                    imp = int(payload.get("importance"))
+                    if imp == 5:
+                        return 1.0
+                except (ValueError, TypeError):
+                    pass
                 created = payload.get("created_at")
                 if not created:
                     return 1.0
                 try:
-                    age_days = (_now - datetime.fromisoformat(created)).days
+                    dt = datetime.fromisoformat(created)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    age_days = (_now - dt).days
                     lane = payload.get("lane")
                     multiplier = LANE_MULTIPLIERS.get(lane, 1.0)
                     return 0.5 ** (age_days / (_half_life * multiplier))
@@ -2111,6 +2157,7 @@ class Memory(MemoryBase):
             memory_id (str): ID of the memory to delete.
         """
         capture_event("mem0.delete", self, {"memory_id": memory_id, "sync_type": "sync"})
+        self._search_depth_cache.clear()
 
         existing_memory = self.vector_store.get(vector_id=memory_id)
         if existing_memory is None:
@@ -2150,6 +2197,7 @@ class Memory(MemoryBase):
         user_id = _validate_and_trim_entity_id(user_id, "user_id")
         agent_id = _validate_and_trim_entity_id(agent_id, "agent_id")
         run_id = _validate_and_trim_entity_id(run_id, "run_id")
+        self._search_depth_cache.clear()
 
         filters: Dict[str, Any] = {}
         if user_id:
@@ -2429,7 +2477,7 @@ class AsyncMemory(MemoryBase):
         self.db = SQLiteManager(self.config.history_db_path)
         self.collection_name = self.config.vector_store.config.collection_name
         self.api_version = self.config.version
-        self._search_depth_cache = {}
+        self._search_depth_cache = OrderedDict()
         self.custom_instructions = self.config.custom_instructions
         self._entity_store = None
         self._executor = concurrent.futures.ThreadPoolExecutor(
@@ -2475,7 +2523,7 @@ class AsyncMemory(MemoryBase):
             return os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
         if depth:
             return depth
-        return resolve_search_depth(query, db_conn=self.db.conn)
+        return resolve_search_depth(query, db_conn=self.db.connection)
 
     @property
     def project(self):
@@ -2729,6 +2777,7 @@ class AsyncMemory(MemoryBase):
         """
         if timestamp is not None:
             raise ValueError(await get_temporal_feature_error_message_async("async", "add", "timestamp"))
+        self._search_depth_cache.clear()
 
         normalized_expiration_date = _normalize_expiration_date(expiration_date)
         temporal_usage_notice = detect_temporal_usage_from_metadata(metadata)
@@ -2966,22 +3015,23 @@ class AsyncMemory(MemoryBase):
             return []
 
         # Phase 2.5: Lane keyword fallback (when LLM didn't output lane)
-        for mem in extracted_memories:
-            if not isinstance(mem, dict):
-                continue
-            meta = mem.get("metadata")
-            if meta and meta.get("lane"):
-                continue  # LLM already set lane, skip fallback
-            text = (mem.get("text") or "").lower()
-            lane = "normal"
-            if any(kw in text for kw in ["踩坑", "报错", "修复", "错误", "教训", "注意", "必须", "禁止", "铁律", "规定", "步骤", "流程", "配置", "怎么做", "如何操作"]):
-                lane = "slow"
-            elif any(kw in text for kw in ["开心", "难过", "心情", "感觉", "失望", "兴奋", "今天", "刚才", "刚刚", "临时", "突然"]):
-                lane = "fast"
-            if meta is None:
-                mem["metadata"] = {"lane": lane}
-            else:
-                meta["lane"] = lane
+        if self.config.enable_lane:
+            for mem in extracted_memories:
+                if not isinstance(mem, dict):
+                    continue
+                meta = mem.get("metadata")
+                if meta and meta.get("lane"):
+                    continue  # LLM already set lane, skip fallback
+                text = (mem.get("text") or "").lower()
+                lane = "normal"
+                if any(kw in text for kw in ["踩坑", "报错", "修复", "错误", "教训", "注意", "必须", "禁止", "铁律", "规定", "步骤", "流程", "配置", "怎么做", "如何操作"]):
+                    lane = "slow"
+                elif any(kw in text for kw in ["开心", "难过", "心情", "感觉", "失望", "兴奋", "今天", "刚才", "刚刚", "临时", "突然"]):
+                    lane = "fast"
+                if meta is None:
+                    mem["metadata"] = {"lane": lane}
+                else:
+                    meta["lane"] = lane
 
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
@@ -3033,7 +3083,7 @@ class AsyncMemory(MemoryBase):
                         mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
                         mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
                         llm_meta = mem.get("metadata") or {}
-                        for k in ("temporal", "temporal_date"):
+                        for k in ("temporal", "temporal_date", "importance", "lane"):
                             if k in llm_meta:
                                 mem_metadata_update[k] = llm_meta[k]
                         update_records.append((str(real_id), text, embed_map[text], mem_metadata_update))
@@ -3061,7 +3111,7 @@ class AsyncMemory(MemoryBase):
 
             # Merge temporal metadata from LLM extraction
             llm_meta = mem.get("metadata") or {}
-            for k in ("temporal", "temporal_date"):
+            for k in ("temporal", "temporal_date", "importance", "lane"):
                 if k in llm_meta:
                     mem_metadata[k] = llm_meta[k]
 
@@ -3571,13 +3621,26 @@ class AsyncMemory(MemoryBase):
             depth = self._resolve_depth(query, depth)
         else:
             depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
+        _min_ttl = int(os.environ.get("MEM0_SEARCH_CACHE_TTL", "0"))
+        _std_ttl = int(os.environ.get("MEM0_SEARCH_STD_CACHE_TTL", "0"))
+        _cache_key = (query, json.dumps(effective_filters, sort_keys=True, default=str))
+
         if depth == "minimal":
+            if _min_ttl > 0:
+                _cached = self._search_depth_cache.get(_cache_key)
+                if _cached and (time.perf_counter() - _cached[0]) < _min_ttl:
+                    return _cached[1]
+                _empty_result = {"results": []}
+                self._search_depth_cache[_cache_key] = (time.perf_counter(), _empty_result)
+                if len(self._search_depth_cache) > _SEARCH_DEPTH_CACHE_MAX:
+                    self._search_depth_cache.popitem(last=False)
+                return _empty_result
             return {"results": []}
 
         # Correction mode: detect user correction signals, widen search
-        if os.environ.get("MEM0_CORRECTION_MODE", "false").lower() == "true":
+        if self.config.correction_mode or os.environ.get("MEM0_CORRECTION_MODE", "false").lower() == "true":
             try:
-                cur = self.db.conn.execute(
+                cur = self.db.connection.execute(
                     "SELECT keyword FROM search_keywords WHERE category='correction' AND match_type='contains'"
                 )
                 for (kw,) in cur.fetchall():
@@ -3589,13 +3652,20 @@ class AsyncMemory(MemoryBase):
             except Exception:
                 pass
 
+        if depth == "standard" and _std_ttl > 0:
+            _cached = self._search_depth_cache.get(_cache_key)
+            if _cached and (time.perf_counter() - _cached[0]) < _std_ttl:
+                return _cached[1]
+
         search_start = time.perf_counter()
         original_memories = await self._search_vector_store(
             query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired
         )
         search_elapsed_seconds = time.perf_counter() - search_start
 
-        if depth == "full":
+        if depth == "standard":
+            pass  # vector-only, no graph or rerank
+        elif depth == "full":
             # Merge graph search results if graph store is enabled
             if self.graph:
                 try:
@@ -3634,7 +3704,13 @@ class AsyncMemory(MemoryBase):
             )
         else:
             await display_first_run_notice_async(self, "async", "search")
-        return {"results": original_memories}
+
+        _results = {"results": original_memories}
+        if depth == "standard" and _std_ttl > 0:
+            self._search_depth_cache[_cache_key] = (time.perf_counter(), _results)
+            if len(self._search_depth_cache) > _SEARCH_DEPTH_CACHE_MAX:
+                self._search_depth_cache.popitem(last=False)
+        return _results
 
     def _process_metadata_filters(self, metadata_filters: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -3795,13 +3871,20 @@ class AsyncMemory(MemoryBase):
             _half_life = float(os.environ.get("MEM0_DECAY_HALF_LIFE_DAYS", "30"))
             _now = datetime.now(timezone.utc)
             def _decay_fn(payload):
-                if payload.get("importance") == 5:
-                    return 1.0
+                try:
+                    imp = int(payload.get("importance"))
+                    if imp == 5:
+                        return 1.0
+                except (ValueError, TypeError):
+                    pass
                 created = payload.get("created_at")
                 if not created:
                     return 1.0
                 try:
-                    age_days = (_now - datetime.fromisoformat(created)).days
+                    dt = datetime.fromisoformat(created)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    age_days = (_now - dt).days
                     lane = payload.get("lane")
                     multiplier = LANE_MULTIPLIERS.get(lane, 1.0)
                     return 0.5 ** (age_days / (_half_life * multiplier))
@@ -4001,6 +4084,7 @@ class AsyncMemory(MemoryBase):
             memory_id (str): ID of the memory to delete.
         """
         capture_event("mem0.delete", self, {"memory_id": memory_id, "sync_type": "async"})
+        self._search_depth_cache.clear()
 
         existing_memory = await asyncio.to_thread(self.vector_store.get, vector_id=memory_id)
         if existing_memory is None:
@@ -4040,6 +4124,7 @@ class AsyncMemory(MemoryBase):
         user_id = _validate_and_trim_entity_id(user_id, "user_id")
         agent_id = _validate_and_trim_entity_id(agent_id, "agent_id")
         run_id = _validate_and_trim_entity_id(run_id, "run_id")
+        self._search_depth_cache.clear()
 
         filters = {}
         if user_id:

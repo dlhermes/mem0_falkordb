@@ -41,9 +41,9 @@ class MemoryItem(BaseModel):
 
 
 LANE_MULTIPLIERS = {
-    "slow": 0.3,
-    "normal": 1.0,
-    "fast": 1.5,
+    "slow": 3.33,   # 30 * 3.33 ≈ 100 day half-life
+    "normal": 1.0,  # 30 day half-life
+    "fast": 0.67,   # 30 * 0.67 ≈ 20 day half-life
 }
 
 
