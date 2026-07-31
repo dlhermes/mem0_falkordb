@@ -1116,6 +1116,10 @@ class Memory(MemoryBase):
                 else:
                     meta["lane"] = lane
 
+        # Filter out non-dict items (LLM may return unexpected types in the "memory" field)
+        extracted_memories = [m for m in extracted_memories if isinstance(m, dict)]
+        logger.info("add Phase 2.5: filtered to %d valid dict memories", len(extracted_memories))
+
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
         logger.info("add Phase 3: extracted_memories=%d, batch embed starting", len(mem_texts))
@@ -3057,6 +3061,10 @@ class AsyncMemory(MemoryBase):
                     mem["metadata"] = {"lane": lane}
                 else:
                     meta["lane"] = lane
+
+        # Filter out non-dict items (LLM may return unexpected types in the "memory" field)
+        extracted_memories = [m for m in extracted_memories if isinstance(m, dict)]
+        logger.info("add Phase 2.5: filtered to %d valid dict memories", len(extracted_memories))
 
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
