@@ -1052,7 +1052,12 @@ class Memory(MemoryBase):
                 if _resp and _resp.strip():
                     try:
                         _chunk_mems = json.loads(_resp, strict=False).get("memory", [])
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as je:
+                        logger.error(
+                            "JSON parse failed on chunk %d after remove_code_blocks: %s | "
+                            "resp_head=%s | resp_tail=%s",
+                            _ci, je, _resp[:300], _resp[-300:],
+                        )
                         _chunk_mems = json.loads(extract_json(_resp), strict=False).get("memory", [])
                     accumulated_memories.extend(_chunk_mems)
                 logger.info(f"Chunk {_ci+1}/{len(_chunks)}: extracted {len(accumulated_memories)} memories so far")
@@ -1085,9 +1090,23 @@ class Memory(MemoryBase):
                 else:
                     try:
                         extracted_memories = json.loads(response, strict=False).get("memory", [])
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as je:
+                        # Log raw response for diagnosis (first + last 500 chars)
+                        logger.error(
+                            "JSON parse failed after remove_code_blocks: %s | "
+                            "response_head=%s | response_tail=%s",
+                            je, response[:500], response[-500:],
+                        )
                         extracted_json = extract_json(response)
-                        extracted_memories = json.loads(extracted_json, strict=False).get("memory", [])
+                        try:
+                            extracted_memories = json.loads(extracted_json, strict=False).get("memory", [])
+                        except json.JSONDecodeError as je2:
+                            logger.error(
+                                "JSON parse failed after extract_json: %s | "
+                                "extracted_head=%s | extracted_tail=%s",
+                                je2, extracted_json[:500], extracted_json[-500:],
+                            )
+                            extracted_memories = []
             except Exception as e:
                 logger.error(f"Error parsing extraction response: {e}")
                 extracted_memories = []
@@ -1774,22 +1793,43 @@ class Memory(MemoryBase):
             if self.graph:
                 try:
                     graph_future = self._executor.submit(self.graph.search, query, effective_filters, limit)
-                    graph_relations = graph_future.result()
+                    graph_relations = graph_future.result(timeout=15)
                     if graph_relations:
-                        original_memories = list(original_memories) + [
-                            {"id": str(uuid.uuid4()), "memory": str(r), "event": "ADD"}
-                            for r in graph_relations
-                        ]
+                        _graph_memories = []
+                        for r in graph_relations[:5]:
+                            src = r.get("source", "")
+                            rel = r.get("relationship", "")
+                            dst = r.get("destination", "")
+                            if not src or not rel or not dst:
+                                continue
+                            _mem = f"{src} - {rel} -> {dst}"
+                            if len(_mem) < 10:
+                                continue
+                            _graph_memories.append(
+                                {"id": str(uuid.uuid4()), "memory": _mem, "event": "ADD"}
+                            )
+                        original_memories = list(original_memories) + _graph_memories
                 except Exception as e:
                     logger.warning(f"Graph search failed, using vector store results only: {e}")
 
             # Apply reranking if enabled and reranker is available
             if rerank and self.reranker and original_memories:
                 try:
+                    logger.info("Rerank triggered: candidates=%d", len(original_memories))
                     reranked_memories = self.reranker.rerank(query, original_memories, limit)
                     original_memories = reranked_memories
                 except Exception as e:
                     logger.warning(f"Reranking failed, using original results: {e}")
+
+            # Filter by rerank_score threshold (config: rerank_score_threshold, default 0 = no filter)
+            _rerank_threshold = getattr(self.config, "rerank_score_threshold", 0.0) or 0.0
+            if _rerank_threshold > 0 and original_memories:
+                _before = len(original_memories)
+                original_memories = [m for m in original_memories if m.get("rerank_score", 0) >= _rerank_threshold]
+                logger.info(
+                    "Rerank threshold filter: %d → %d (threshold=%.2f)",
+                    _before, len(original_memories), _rerank_threshold,
+                )
 
         if temporal_usage_notice:
             display_temporal_usage_notice(self, "sync", "search", *temporal_usage_notice)
@@ -3011,10 +3051,15 @@ class AsyncMemory(MemoryBase):
                 if _resp and _resp.strip():
                     try:
                         _chunk_mems = json.loads(_resp, strict=False).get("memory", [])
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as je:
+                        logger.error(
+                            "JSON parse failed on chunk %d after remove_code_blocks (async): %s | "
+                            "resp_head=%s | resp_tail=%s",
+                            _ci, je, _resp[:300], _resp[-300:],
+                        )
                         _chunk_mems = json.loads(extract_json(_resp), strict=False).get("memory", [])
                     accumulated_memories.extend(_chunk_mems)
-                logger.info(f"Chunk {_ci+1}/{len(_chunks)}: extracted {len(accumulated_memories)} memories so far")
+                logger.info(f"Chunk {_ci+1}/{len(_chunks)}: extracted {len(accumulated_memories)} memories so far (async)")
             extracted_memories = accumulated_memories
         else:
             # Original single-call path
@@ -3045,9 +3090,22 @@ class AsyncMemory(MemoryBase):
                 else:
                     try:
                         extracted_memories = json.loads(response, strict=False).get("memory", [])
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as je:
+                        logger.error(
+                            "JSON parse failed after remove_code_blocks (async): %s | "
+                            "response_head=%s | response_tail=%s",
+                            je, response[:500], response[-500:],
+                        )
                         extracted_json = extract_json(response)
-                        extracted_memories = json.loads(extracted_json, strict=False).get("memory", [])
+                        try:
+                            extracted_memories = json.loads(extracted_json, strict=False).get("memory", [])
+                        except json.JSONDecodeError as je2:
+                            logger.error(
+                                "JSON parse failed after extract_json (async): %s | "
+                                "extracted_head=%s | extracted_tail=%s",
+                                je2, extracted_json[:500], extracted_json[-500:],
+                            )
+                            extracted_memories = []
             except Exception as e:
                 logger.error(f"Error parsing extraction response (async): {e}")
                 extracted_memories = []
@@ -3730,14 +3788,24 @@ class AsyncMemory(MemoryBase):
                 try:
                     graph_relations = await asyncio.to_thread(self.graph.search, query, effective_filters, limit)
                     if graph_relations:
-                        original_memories = list(original_memories) + [
-                            {"id": str(uuid.uuid4()), "memory": str(r), "event": "ADD"}
-                            for r in graph_relations
-                        ]
+                        _graph_memories = []
+                        for r in graph_relations[:5]:
+                            src = r.get("source", "")
+                            rel = r.get("relationship", "")
+                            dst = r.get("destination", "")
+                            if not src or not rel or not dst:
+                                continue
+                            _mem = f"{src} - {rel} -> {dst}"
+                            if len(_mem) < 10:
+                                continue
+                            _graph_memories.append(
+                                {"id": str(uuid.uuid4()), "memory": _mem, "event": "ADD"}
+                            )
+                        original_memories = list(original_memories) + _graph_memories
                 except Exception as e:
                     logger.warning(f"Graph search failed, using vector store results only: {e}")
 
-            # Apply reranking if enabled and reranker is available
+            # Apply reranking if enabled and reranker is available (async)  ← 此处注释有 async
             if rerank and self.reranker and original_memories:
                 try:
                     # Run reranking in thread pool to avoid blocking async loop
@@ -3747,6 +3815,16 @@ class AsyncMemory(MemoryBase):
                     original_memories = reranked_memories
                 except Exception as e:
                     logger.warning(f"Reranking failed, using original results: {e}")
+
+            # Filter by rerank_score threshold
+            _rerank_threshold = getattr(self.config, "rerank_score_threshold", 0.0) or 0.0
+            if _rerank_threshold > 0 and original_memories:
+                _before = len(original_memories)
+                original_memories = [m for m in original_memories if m.get("rerank_score", 0) >= _rerank_threshold]
+                logger.info(
+                    "Rerank threshold filter: %d → %d (threshold=%.2f)",
+                    _before, len(original_memories), _rerank_threshold,
+                )
 
         if temporal_usage_notice:
             await display_temporal_usage_notice_async(self, "async", "search", *temporal_usage_notice)

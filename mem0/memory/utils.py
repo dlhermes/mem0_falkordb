@@ -116,16 +116,38 @@ def normalize_facts(raw_facts):
 def remove_code_blocks(content: str) -> str:
     """
     Removes enclosing code block markers ```[language] and ``` from a given string.
+    Also strips DeepSeek-style thinking blocks that appear before the JSON content.
 
     Remarks:
     - The function uses a regex pattern to match code blocks that may start with ``` followed by an optional language tag (letters or numbers) and end with ```.
     - If a code block is detected, it returns only the inner content, stripping out the markers.
     - If no code block markers are found, the original content is returned as-is.
+    - Thinking blocks are only stripped from the prefix before the first '{' to avoid corrupting JSON content that legitimately contains "thinking"/"response" words.
     """
     pattern = r"^```[a-zA-Z0-9]*\n([\s\S]*?)\n```$"
     match = re.match(pattern, content.strip())
-    match_res=match.group(1).strip() if match else content.strip()
-    return re.sub(r"<think>.*?</think>", "", match_res, flags=re.DOTALL).strip()
+    match_res = match.group(1).strip() if match else content.strip()
+
+    # Find where the JSON starts (first '{')
+    first_brace = match_res.find("{")
+    if first_brace > 0:
+        # There's a prefix before the JSON — strip thinking block only from prefix
+        prefix = match_res[:first_brace]
+        json_part = match_res[first_brace:]
+        prefix = re.sub(
+            r"^\s*thinking.*?\s*response\s*",
+            "", prefix, flags=re.DOTALL,
+        )
+        return (prefix + json_part).strip()
+    elif first_brace == -1:
+        # No JSON found — strip thinking block from entire content (backward compat)
+        return re.sub(
+            r"^\s*thinking.*?\s*response\s*",
+            "", match_res, flags=re.DOTALL,
+        ).strip()
+
+    # JSON starts at position 0 — no prefix to strip
+    return match_res.strip()
 
 
 

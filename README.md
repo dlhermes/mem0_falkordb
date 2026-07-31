@@ -471,6 +471,57 @@ Hermes 插件旧版 `sync_turn` 方法在失败重入时使用了 `extendleft(re
 | `MEM0_ENABLE_CONTRADICTION` | `true` | 启用矛盾检测，自动清理冲突信息 |
 | `MEM0_SEARCH_DEPTH_DEFAULT` | `full` | 生产环境建议保持 `full`，确保搜索质量 |
 
+### 安装修复版 Hermes 插件（启用 Rerank 重排序）
+
+本仓库 `plugins/memory/mem0/` 目录包含修复后的 Hermes mem0 插件，相比上游插件做了以下改进：
+
+| 修复项 | 上游插件 | 本仓库插件 |
+|:-------|:---------|:-----------|
+| **rerank 参数传递** | 注释写"platform-only"，不传给 API | 显式传递 `rerank=True` + `depth="full"` |
+| **工具描述** | 标注"platform mode only"误导 | 修正为"self-hosted supports this" |
+
+**安装方法**：
+
+```bash
+# 1. 备份原插件
+cp -r ~/.hermes/hermes-agent/plugins/memory/mem0 ~/.hermes/hermes-agent/plugins/memory/mem0.bak
+
+# 2. 替换为修复版
+cp -r /path/to/mem0_falkordb/plugins/memory/mem0/* ~/.hermes/hermes-agent/plugins/memory/mem0/
+
+# 3. 重启 Hermes（或下一轮对话自动生效）
+```
+
+> **说明**：mem0 server 已内置自动启用 rerank 的逻辑（`config.json` 配置了 reranker 时自动 `rerank=True`），即使不替换插件，自部署版也能正常重排序。但替换插件可以确保参数显式传递，避免平台升级时的兼容性问题。
+
+### Reranker 上下文窗口配置（换用 32K 模型时调高）
+
+当换用更大上下文的 reranker 模型（如 32K token）时，在 `server/.env` 中调高以下参数：
+
+```bash
+# 默认值（适配 BAAI/bge-reranker-v2-m3 的 8K token）
+MEM0_RERANK_QUERY_MAX_CHARS=4000   # 搜索 query 截断阈值
+MEM0_RERANK_DOCS_MAX_CHARS=6000    # 候选文档分批阈值
+
+# 换用 32K 模型时建议调高（例如 SiliconFlow 的 Pro 系列）
+MEM0_RERANK_QUERY_MAX_CHARS=16000
+MEM0_RERANK_DOCS_MAX_CHARS=16000
+```
+
+修改后 `docker compose up -d --force-recreate mem0` 生效（`.env` 变更需重建容器，`restart` 不生效）。
+
+### Rerank 分数阈值过滤
+
+`config.json` 中 `rerank_score_threshold` 控制重排序后保留的最低分数（默认 0.45）：
+
+| 阈值 | 效果 |
+|:-----|:-----|
+| `0` | 不过滤，返回所有结果 |
+| `0.45` | 过滤低相关度噪音（推荐） |
+| `0.6` | 仅保留高置信度结果 |
+
+低于阈值的结果会被丢弃，日志中会打印过滤前后的数量。修改 `config.json` 后 `docker compose restart mem0` 即可生效（无需重建）。
+
 ## 环境要求
 
 - Python 3.10-3.12
