@@ -351,7 +351,26 @@ class MemoryGraph:
             messages=[
                 {
                     "role": "system",
-                    "content": f"你是一个理解文本中实体及其类型的智能助手。如果用户消息中包含自指代（如'我'、'我的'等），请使用 {filters['user_id']} 作为源实体。请调用 extract_entities 工具从文本中提取所有实体。必须用与输入相同的语言输出实体名称。***不要***回答文本中的问题，只提取实体。",
+                    "content": (
+                        f"你是一个理解文本中实体及其类型的智能助手。如果用户消息中包含自指代"
+                        f"（如'我'、'我的'等），请使用 {filters['user_id']} 作为源实体。"
+                        f"请调用 extract_entities 工具从文本中提取所有实体。"
+                        f"必须用与输入相同的语言输出实体名称。"
+                        f"***不要***回答文本中的问题，只提取实体。\n\n"
+                        f"实体类型必须从以下白名单中选择，不要自行发明类型：\n"
+                        f"- person：人物（如用户名、人名）\n"
+                        f"- organization：组织、公司、团队\n"
+                        f"- location：地理位置、城市、国家\n"
+                        f"- tool：软件工具、命令、库、框架（如 docker、python、httpx）\n"
+                        f"- concept：技术概念、方法论、抽象术语（如记忆系统、微服务）\n"
+                        f"- event：事件、 incident、里程碑\n"
+                        f"- metric：指标、度量值、性能数据（如 CPU 使用率、QPS）\n"
+                        f"- product：产品、服务、项目名\n"
+                        f"- user：仅当实体确实是用户/人且无法确定具体身份时使用\n"
+                        f"- other：不属于以上任何类别的实体\n\n"
+                        f"注意：关系类型名（如 related_to）、指标变量名（如 wrqm/s、r/s、us）"
+                        f"不应作为实体提取。Python 模块名（如 httpx.client）应标记为 tool 而非 user。"
+                    ),
                 },
                 {"role": "user", "content": data},
             ],
@@ -468,9 +487,29 @@ class MemoryGraph:
         uid = self._user_id(filters)
         node_props_str, base_params = self._build_node_props(filters)
 
+        _unique_nodes = list(dict.fromkeys(node_list))
+        _embedding_cache = {}
+        if _unique_nodes:
+            try:
+                _embeddings = self.embedding_model.embed_batch(_unique_nodes, "search")
+                _embedding_cache = dict(zip(_unique_nodes, _embeddings))
+            except Exception as e:
+                logger.warning(
+                    "graph embed_batch failed (%d texts), falling back to individual embed: %s",
+                    len(_unique_nodes), e,
+                )
+                for text in _unique_nodes:
+                    try:
+                        _embedding_cache[text] = self.embedding_model.embed(text, "search")
+                    except Exception as embed_err:
+                        logger.warning("graph entity embed failed for '%s': %s", text, embed_err)
+
+        if _embedding_cache:
+            _first_embedding = next(iter(_embedding_cache.values()))
+            self._ensure_vector_index(len(_first_embedding), user_id=uid)
+
         for node in node_list:
-            n_embedding = self.embedding_model.embed(node)
-            self._ensure_vector_index(len(n_embedding), user_id=uid)
+            n_embedding = _embedding_cache.get(node) or self.embedding_model.embed(node, "search")
 
             label = "__Entity__" if self.use_base_label else "Node"
 
@@ -586,6 +625,28 @@ class MemoryGraph:
         uid = self._user_id(filters)
         results = []
 
+        # 批量预计算所有 entity 的 embedding，避免循环内逐条调用 API
+        _all_entity_texts = set()
+        for item in to_be_added:
+            _all_entity_texts.add(item["source"])
+            _all_entity_texts.add(item["destination"])
+        _entity_text_list = list(_all_entity_texts)
+        _embedding_cache = {}
+        if _entity_text_list:
+            try:
+                _embeddings = self.embedding_model.embed_batch(_entity_text_list, "add")
+                _embedding_cache = dict(zip(_entity_text_list, _embeddings))
+            except Exception as e:
+                logger.warning(
+                    "graph embed_batch failed (%d texts), falling back to individual embed: %s",
+                    len(_entity_text_list), e,
+                )
+                for text in _entity_text_list:
+                    try:
+                        _embedding_cache[text] = self.embedding_model.embed(text, "add")
+                    except Exception as embed_err:
+                        logger.warning("graph entity embed failed for '%s': %s", text, embed_err)
+
         for item in to_be_added:
             source = item["source"]
             destination = item["destination"]
@@ -607,8 +668,8 @@ class MemoryGraph:
                 f", destination:`{_safe_dest_type}`" if self.node_label else ""
             )
 
-            source_embedding = self.embedding_model.embed(source)
-            dest_embedding = self.embedding_model.embed(destination)
+            source_embedding = _embedding_cache.get(source) or self.embedding_model.embed(source)
+            dest_embedding = _embedding_cache.get(destination) or self.embedding_model.embed(destination)
             self._ensure_vector_index(len(source_embedding), user_id=uid)
 
             source_node = self._search_node_by_embedding(source_embedding, filters)

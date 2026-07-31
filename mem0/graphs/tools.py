@@ -135,7 +135,7 @@ EXTRACT_ENTITIES_TOOL = {
                         "type": "object",
                         "properties": {
                             "entity": {"type": "string", "description": "The name or identifier of the entity."},
-                            "entity_type": {"type": "string", "description": "The type or category of the entity."},
+                            "entity_type": {"type": "string", "description": "The type or category of the entity. Must be one of: person, organization, location, tool, concept, event, metric, product, user, other."},
                         },
                         "required": ["entity", "entity_type"],
                         "additionalProperties": False,
@@ -293,7 +293,7 @@ EXTRACT_ENTITIES_STRUCT_TOOL = {
                         "type": "object",
                         "properties": {
                             "entity": {"type": "string", "description": "The name or identifier of the entity."},
-                            "entity_type": {"type": "string", "description": "The type or category of the entity."},
+                            "entity_type": {"type": "string", "description": "The type or category of the entity. Must be one of: person, organization, location, tool, concept, event, metric, product, user, other."},
                         },
                         "required": ["entity", "entity_type"],
                         "additionalProperties": False,
