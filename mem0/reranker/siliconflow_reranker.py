@@ -1,3 +1,4 @@
+import json
 """SiliconFlow native reranker using their /v1/rerank API directly via HTTP."""
 import logging
 import os
@@ -76,7 +77,7 @@ class SiliconFlowReranker(BaseReranker):
         last_exc = None
         for attempt in range(1, self._max_retries + 1):
             try:
-                response = self._client.post(url, json=payload, headers=headers)
+                response = self._client.post(url, content=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers)
                 if response.status_code in _RETRYABLE_STATUS_CODES:
                     last_exc = httpx.HTTPStatusError(
                         f"HTTP {response.status_code}: {response.text[:200]}",
