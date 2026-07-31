@@ -33,6 +33,18 @@
       "database": "mem0"
     }
   },
+  "vector_store": {
+    "provider": "pgvector",
+    "config": {
+      "host": "postgres",
+      "port": 5432,
+      "user": "postgres",
+      "password": "你的数据库密码",
+      "dbname": "mem0_app",
+      "collection_name": "mem0_memories",
+      "embedding_model_dims": 1536
+    }
+  },
   "enable_search_depth": true,
   "enable_lane": true,
   "correction_mode": true,
