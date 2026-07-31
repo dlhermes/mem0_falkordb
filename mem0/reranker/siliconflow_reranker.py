@@ -11,11 +11,11 @@ from mem0.reranker.base import BaseReranker
 
 logger = logging.getLogger(__name__)
 
-# SiliconFlow rerank API 的 query+documents 共享 8K token 上下文限制。
-# query 临界点实测约 20000 chars（4000 words），留余量给 documents。
-_RERANK_QUERY_MAX_CHARS = 4000
-# documents 分批阈值：总字符数超此值时分批请求再合并 top_k。
-_RERANK_DOCS_MAX_CHARS = 6000
+# SiliconFlow rerank API 的 query+documents 共享上下文限制（默认适应 BAAI/bge-reranker-v2-m3 的 8K token）。
+# 换用更大上下文的模型时，通过环境变量调高：
+#   MEM0_RERANK_QUERY_MAX_CHARS=16000  MEM0_RERANK_DOCS_MAX_CHARS=16000
+_RERANK_QUERY_MAX_CHARS_DEFAULT = 4000
+_RERANK_DOCS_MAX_CHARS_DEFAULT = 6000
 # 可重试的 HTTP 状态码（429 限流 / 500-503 服务端临时错误）
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
 
@@ -34,29 +34,34 @@ class SiliconFlowReranker(BaseReranker):
         self._max_retries = int(os.environ.get("MEM0_RERANK_MAX_RETRIES", "3"))
         self._client = httpx.Client(timeout=timeout)
         self._request_delay = float(os.environ.get("MEM0_RERANK_REQUEST_DELAY", "0"))
+        # 可通过环境变量调高，适配更大上下文的 reranker 模型
+        self._query_max_chars = int(os.environ.get(
+            "MEM0_RERANK_QUERY_MAX_CHARS", str(_RERANK_QUERY_MAX_CHARS_DEFAULT)))
+        self._docs_max_chars = int(os.environ.get(
+            "MEM0_RERANK_DOCS_MAX_CHARS", str(_RERANK_DOCS_MAX_CHARS_DEFAULT)))
 
     def _truncate_query(self, query: str) -> str:
         """截断 query 以避免 SiliconFlow API 的 'Query is too long' 400 错误。"""
-        if len(query) <= _RERANK_QUERY_MAX_CHARS:
+        if len(query) <= self._query_max_chars:
             return query
-        truncated = query[:_RERANK_QUERY_MAX_CHARS]
+        truncated = query[:self._query_max_chars]
         logger.info(
             "Rerank query truncated: %d -> %d chars (limit=%d)",
-            len(query), len(truncated), _RERANK_QUERY_MAX_CHARS,
+            len(query), len(truncated), self._query_max_chars,
         )
         return truncated
 
     def _chunk_documents(self, doc_texts: List[str]) -> List[List[str]]:
-        """当 documents 总字符数超阈值时，分批以避免 query+docs 超 8K token 限制。"""
+        """当 documents 总字符数超阈值时，分批以避免 query+docs 超 token 限制。"""
         total_chars = sum(len(d) for d in doc_texts)
-        if total_chars <= _RERANK_DOCS_MAX_CHARS:
+        if total_chars <= self._docs_max_chars:
             return [doc_texts]
         chunks = []
         current = []
         current_chars = 0
         for doc in doc_texts:
             doc_chars = len(doc)
-            if current and current_chars + doc_chars > _RERANK_DOCS_MAX_CHARS:
+            if current and current_chars + doc_chars > self._docs_max_chars:
                 chunks.append(current)
                 current = []
                 current_chars = 0
@@ -66,7 +71,7 @@ class SiliconFlowReranker(BaseReranker):
             chunks.append(current)
         logger.info(
             "Rerank documents split into %d batches (total %d chars, limit=%d)",
-            len(chunks), total_chars, _RERANK_DOCS_MAX_CHARS,
+            len(chunks), total_chars, self._docs_max_chars,
         )
         return chunks
 
@@ -92,7 +97,9 @@ class SiliconFlowReranker(BaseReranker):
                         time.sleep(delay)
                         continue
                 response.raise_for_status()
-                return response.json()
+                data = response.json()
+                logger.info("SiliconFlow rerank OK: docs=%d", len(payload.get("documents", [])))
+                return data
             except httpx.TimeoutException as e:
                 last_exc = e
                 if attempt < self._max_retries:
@@ -123,6 +130,8 @@ class SiliconFlowReranker(BaseReranker):
     def rerank(self, query: str, documents: List[Dict[str, Any]], top_k: int = None) -> List[Dict[str, Any]]:
         if not documents:
             return documents
+
+        logger.info("Rerank called: query=%.60s... docs=%d", query, len(documents))
 
         doc_texts = []
         for doc in documents:
@@ -200,4 +209,5 @@ class SiliconFlowReranker(BaseReranker):
         elif self.config.top_k:
             all_reranked = all_reranked[:self.config.top_k]
 
+        logger.info("Rerank done: final=%d", len(all_reranked))
         return all_reranked

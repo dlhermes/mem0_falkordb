@@ -43,12 +43,35 @@ logger = logging.getLogger(__name__)
 
 _MAX_GRAPH_CACHE = 256
 
+_CHINESE_STOP_WORDS = frozenset({
+    "的", "了", "是", "在", "和", "也", "都", "就", "有", "不",
+    "与", "对", "从", "到", "而", "及", "以", "但", "或", "所",
+    "被", "把", "给", "让", "向", "将", "着", "要", "会", "能",
+    "可以", "什么", "怎么", "哪", "那", "这", "很", "吗", "呢",
+    "啊", "吧", "哦", "嗯", "哈", "呀", "嘛", "么",
+})
+
 
 def _tokenize_cjk(text):
     """Tokenize text for BM25 — uses jieba for CJK, whitespace-split otherwise."""
     if _JIEBA_AVAILABLE and text and any('\u4e00' <= c <= '\u9fff' for c in text):
         return list(jieba.cut(text))
     return text.split()
+
+
+def _tokenize_query_for_search(query):
+    """Tokenize query for graph search — jieba for CJK, filter noise tokens."""
+    tokens = _tokenize_cjk(query)
+    seen = set()
+    result = []
+    for t in tokens:
+        t_stripped = t.strip()
+        if not t_stripped or len(t_stripped) < 2 or t_stripped in _CHINESE_STOP_WORDS:
+            continue
+        if t_stripped not in seen:
+            seen.add(t_stripped)
+            result.append(t_stripped)
+    return result
 
 
 class _FalkorDBGraphWrapper:
@@ -255,9 +278,11 @@ class MemoryGraph:
 
     def search(self, query, filters, limit=100):
         """Search for memories and related graph data."""
-        entity_type_map = self._retrieve_nodes_from_data(query, filters)
+        node_list = _tokenize_query_for_search(query)
+        if not node_list:
+            return []
         search_output = self._search_graph_db(
-            node_list=list(entity_type_map.keys()), filters=filters
+            node_list=node_list, filters=filters
         )
 
         if not search_output:
@@ -270,12 +295,25 @@ class MemoryGraph:
         bm25 = BM25Okapi(search_outputs_sequence)
 
         tokenized_query = _tokenize_cjk(query)
-        reranked_results = bm25.get_top_n(tokenized_query, search_outputs_sequence, n=5)
+        scores = bm25.get_scores(tokenized_query)
+        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:5]
 
         search_results = []
-        for item in reranked_results:
+        for idx in top_indices:
+            if scores[idx] <= 0:
+                continue
+            item = search_output[idx]
+            src = item["source"]
+            rel = item["relationship"]
+            dst = item["destination"]
+            if src == dst:
+                continue
+            if rel == "related_to":
+                continue
+            if len(src) < 2 or len(dst) < 2:
+                continue
             search_results.append(
-                {"source": item[0], "relationship": item[1], "destination": item[2]}
+                {"source": src, "relationship": rel, "destination": dst}
             )
 
         logger.info(f"Returned {len(search_results)} search results")
