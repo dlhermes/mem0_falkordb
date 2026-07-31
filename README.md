@@ -428,6 +428,46 @@ MEM0_SEARCH_STD_CACHE_TTL=5         # standard 路径 LRU 缓存 TTL 秒
 
 种子词表通过迁移 `mem0/migrations/_002_search_keywords.py` 初始化（含中英文 ~140 条，分 minimal/standard/full/correction 四类）。增删词直接操作 `search_keywords` 表，无需重启服务。`depth` 参数也暴露在 `SearchRequest` API 和 SDK `SearchMemoryOptions` 中，外部调用可显式指定。
 
+## Hermes 集成兼容性
+
+### 问题背景
+
+Hermes Agent 的 mem0 插件（`plugins/memory/mem0`）通过 HTTP 调用本 Fork 的 mem0 server。在大上下文场景（200K+ tokens）下，mem0 的 `add` 操作（LLM 提取 + 批量 embedding）处理时间可能达到 34-149 秒，而 Hermes 插件的默认 HTTP 超时只有 30 秒，导致每轮对话结束后出现 `Mem0 sync failed: timed out` 警告。
+
+### 解决方案
+
+| 步骤 | 位置 | 操作 |
+|:-----|:-----|:-----|
+| 1 | 本 Fork `server/.env.example` | 已提供 `MEM0_SYNC_TIMEOUT` 参考值（建议 ≥120 秒），**仅供文档参考**，实际超时配置在 Hermes 侧 |
+| 2 | `~/.hermes/plugins/memory/mem0/_backend.py` | 修改 `httpx.Client(timeout=...)` 的值，从默认 30 改为 **120 或更高** |
+
+```python
+# _backend.py — 修改前
+self.client = httpx.Client(timeout=30)
+
+# 修改后
+self.client = httpx.Client(timeout=120)
+```
+
+### 队列重入 Bug（历史问题，已修复）
+
+Hermes 插件旧版 `sync_turn` 方法在失败重入时使用了 `extendleft(reversed(merged))`，导致 dict 被拆散为单个 key 字符串，引发 mem0 服务端 422 校验失败。
+
+| 版本 | 行为 | 结果 |
+|:-----|:-----|:-----|
+| 旧版 | `extendleft(reversed(merged))` 重入 | dict → 单个 key 字符串 → 422 |
+| 修复版 | deque 消费者模式，逐条 pop 处理 | 正确写入 |
+
+> 如果 Hermes 日志中出现大量 422 错误，请检查插件版本是否已包含此修复。
+
+### 其他建议
+
+| 配置项 | 建议值 | 说明 |
+|:-------|:-------|:-----|
+| `MEM0_ENABLE_DECAY` | `true` | 启用记忆衰减，提升长期记忆质量 |
+| `MEM0_ENABLE_CONTRADICTION` | `true` | 启用矛盾检测，自动清理冲突信息 |
+| `MEM0_SEARCH_DEPTH_DEFAULT` | `full` | 生产环境建议保持 `full`，确保搜索质量 |
+
 ## 环境要求
 
 - Python 3.10-3.12
