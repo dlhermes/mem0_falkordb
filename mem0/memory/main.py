@@ -900,6 +900,9 @@ class Memory(MemoryBase):
         else:
             messages = parse_vision_messages(messages)
 
+        import time as _time
+        _add_start = _time.perf_counter()
+
         vector_store_result = self._add_to_vector_store(messages, processed_metadata, effective_filters, infer, prompt=prompt)
 
         # Non-blocking graph write — fire and forget
@@ -914,6 +917,11 @@ class Memory(MemoryBase):
             display_scale_threshold_notice(self, "sync", "add", *scale_threshold_notice)
         else:
             display_first_run_notice(self, "sync", "add")
+        _add_elapsed = _time.perf_counter() - _add_start
+        logger.info(
+            "add pipeline complete: elapsed=%.1fs, results=%d",
+            _add_elapsed, len(vector_store_result) if isinstance(vector_store_result, list) else 0,
+        )
         return {"results": vector_store_result}
 
     def _add_to_vector_store(self, messages, metadata, filters, infer, prompt=None):
@@ -959,6 +967,10 @@ class Memory(MemoryBase):
         session_scope = _build_session_scope(filters)
         last_messages = self.db.get_last_messages(session_scope, limit=10)
         parsed_messages = parse_messages(messages)
+        logger.info(
+            "add pipeline start: messages=%d, parsed_chars=%d, filters=%s",
+            len(messages), len(parsed_messages), {k: v for k, v in filters.items() if k in ("user_id", "agent_id", "run_id")},
+        )
 
         # Phase 1: Existing memory retrieval
         search_filters = {k: v for k, v in filters.items() if k in ("user_id", "agent_id", "run_id") and v}
@@ -993,6 +1005,10 @@ class Memory(MemoryBase):
 
         if DEFAULT_MAX_INPUT_TOKENS > 0 and _total_est > DEFAULT_MAX_INPUT_TOKENS:
             # === Chunked extraction ===
+            logger.info(
+                "add chunked extraction: total_est_tokens=%d, max_input_tokens=%d",
+                _total_est, DEFAULT_MAX_INPUT_TOKENS,
+            )
             _per_chunk_limit = max(DEFAULT_MAX_INPUT_TOKENS - _base_overhead, 500)
             # Split messages into chunks by item count, keeping each chunk under token limit
             _chunks = []
@@ -1102,11 +1118,16 @@ class Memory(MemoryBase):
 
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
+        logger.info("add Phase 3: extracted_memories=%d, batch embed starting", len(mem_texts))
         try:
             mem_embeddings_list = self.embedding_model.embed_batch(mem_texts, "add")
             embed_map = dict(zip(mem_texts, mem_embeddings_list))
-        except Exception:
+        except Exception as e:
             # Fallback: embed individually
+            logger.warning(
+                "embed_batch failed (%d texts), falling back to individual embed: %s",
+                len(mem_texts), e,
+            )
             embed_map = {}
             for text in mem_texts:
                 try:
@@ -2925,6 +2946,10 @@ class AsyncMemory(MemoryBase):
 
         if DEFAULT_MAX_INPUT_TOKENS > 0 and _total_est > DEFAULT_MAX_INPUT_TOKENS:
             # === Chunked extraction ===
+            logger.info(
+                "add chunked extraction: total_est_tokens=%d, max_input_tokens=%d",
+                _total_est, DEFAULT_MAX_INPUT_TOKENS,
+            )
             _per_chunk_limit = max(DEFAULT_MAX_INPUT_TOKENS - _base_overhead, 500)
             # Split messages into chunks by item count, keeping each chunk under token limit
             _chunks = []
