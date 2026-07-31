@@ -32,6 +32,7 @@ class SiliconFlowReranker(BaseReranker):
         timeout = float(os.environ.get("MEM0_RERANK_TIMEOUT", "60"))
         self._max_retries = int(os.environ.get("MEM0_RERANK_MAX_RETRIES", "3"))
         self._client = httpx.Client(timeout=timeout)
+        self._request_delay = float(os.environ.get("MEM0_RERANK_REQUEST_DELAY", "0"))
 
     def _truncate_query(self, query: str) -> str:
         """截断 query 以避免 SiliconFlow API 的 'Query is too long' 400 错误。"""
@@ -152,6 +153,9 @@ class SiliconFlowReranker(BaseReranker):
             }
             payload = {k: v for k, v in payload.items() if v is not None}
 
+            # 请求间隔（避免触发限流）
+            if chunk_idx > 0 and self._request_delay > 0:
+                time.sleep(self._request_delay)
             try:
                 data = self._post_rerank(payload)
             except httpx.HTTPStatusError as e:

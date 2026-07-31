@@ -14,8 +14,7 @@
     "config": {
       "api_key": "sk-你的Key",
       "model": "text-embedding-3-small",
-      "openai_base_url": "",
-      "embedding_dims": 1536
+      "openai_base_url": ""
     }
   },
   "reranker": {
@@ -41,8 +40,7 @@
       "user": "postgres",
       "password": "你的数据库密码",
       "dbname": "mem0_app",
-      "collection_name": "mem0_memories",
-      "embedding_model_dims": 1536
+      "collection_name": "mem0_memories"
     }
   },
   "enable_search_depth": true,

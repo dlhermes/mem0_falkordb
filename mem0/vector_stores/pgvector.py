@@ -229,8 +229,8 @@ class PGVector(VectorStoreBase):
                 row = cur.fetchone()
                 if row is None or row[0] is None:
                     return None
-                # pgvector stores typmod as VARHDRSZ(4) + dimension
-                return row[0] - 4
+                # pgvector typmod IS the dimension — DO NOT subtract VARHDRSZ
+                return row[0]
         except Exception:
             return None
 

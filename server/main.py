@@ -142,7 +142,7 @@ POSTGRES_PORT = os.environ.get("POSTGRES_PORT", "5432")
 POSTGRES_DB = os.environ.get("POSTGRES_DB", "postgres")
 POSTGRES_USER = os.environ.get("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres")
-POSTGRES_COLLECTION_NAME = os.environ.get("POSTGRES_COLLECTION_NAME", "memories")
+POSTGRES_COLLECTION_NAME = os.environ.get("POSTGRES_COLLECTION_NAME", "mem0_memories")
 
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "falkordb")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6379"))
@@ -183,6 +183,7 @@ DEFAULT_CONFIG = {
             "user": POSTGRES_USER,
             "password": POSTGRES_PASSWORD,
             "collection_name": POSTGRES_COLLECTION_NAME,
+            "embedding_model_dims": int(_embedding_dims) if _embedding_dims is not None else None,
         },
     },
     "llm": {"provider": "openai", "config": LLM_CONFIG},

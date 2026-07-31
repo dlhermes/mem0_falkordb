@@ -25,7 +25,7 @@ cp .env.example .env
 ```json
 {
   "llm":         { "provider": "openai", "config": { "model": "...", "api_key": "sk-你的Key", "openai_base_url": "" } },
-  "embedder":    { "provider": "openai", "config": { "model": "...", "api_key": "sk-你的Key", "openai_base_url": "", "embedding_dims": 1536 } },
+  "embedder":    { "provider": "openai", "config": { "model": "...", "api_key": "sk-你的Key", "openai_base_url": "" } },
   "reranker":    { "provider": "siliconflow", "config": { "model": "BAAI/bge-reranker-v2-m3", "api_key": "sk-你的Key" } },
   "graph_store": { "provider": "falkordb", "config": { "host": "falkordb", "port": 6379, "database": "mem0" } }
 }
@@ -209,6 +209,16 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 
 同时保留上游全部 Provider：Zero Entropy、Cohere、Sentence Transformer、HuggingFace、LLM-based。详见 [docs.mem0.ai](https://docs.mem0.ai/open-source/overview)。
 
+### 11. pgvector 维度检测 Bug（重建容器后记忆清空）
+
+**现象**：`docker compose down && up -d` 重建容器后，所有记忆丢失，`mem0_memories` 表为空。
+
+**根因**：`mem0/vector_stores/pgvector.py` 的 `_get_table_vector_dim` 方法中，错误地执行了 `atttypmod - 4`。pgvector 的 `atttypmod` 直接等于向量维度数，不需要减 4。导致 `_ensure_collection` 检测到 `1020 ≠ 1024`（实际是 `1024 = 1024`），误触发 `delete_col()` + `create_col()`，清空所有记忆。
+
+**修复**：将 `return row[0] - 4` 改为 `return row[0]`。同时将 `MEM0_EMBEDDING_DIMS` 环境变量同步传递到 `DEFAULT_CONFIG["vector_store"]["config"]["embedding_model_dims"]`，确保维度一致性从 `.env` 统一管理。
+
+> ⚠️ `.env` 中 `MEM0_EMBEDDING_DIMS` 的值必须与实际 Embedder 模型输出的向量维度一致（voyage-4-large = 1024，text-embedding-3-small = 1536）。不一致会导致写入时重建表。
+
 ## 性能调优
 
 通过环境变量调优数据库连接池、HTTP 客户端超时等参数。所有变量在 `docker-compose.yaml` 中 mem0 服务的 `environment` 段或 `.env` 文件中设置。
@@ -245,7 +255,7 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 |---|---|---|
 | `MEM0_EMBEDDER_TIMEOUT` | SDK 默认 | OpenAI Embedding 客户端请求超时（秒） |
 | `MEM0_EMBEDDER_MAX_RETRIES` | SDK 默认 | OpenAI Embedding 客户端最大重试次数 |
-| `MEM0_EMBEDDING_DIMS` | 不设置 | Embedding 向量维度，不设置则自动检测 |
+| `MEM0_EMBEDDING_DIMS` | 不设置 | Embedding 向量维度（同时设置到 `embedder.config.embedding_dims` 和 `vector_store.config.embedding_model_dims`）。不设置则从模型自动检测 |
 | `MEM0_EMBEDDING_BATCH_SIZE` | `100` | 批量 Embedding 每次请求最大文本条数 |
 
 ### 图存储
@@ -259,8 +269,8 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `MEM0_RERANK_TIMEOUT` | `60` | SiliconFlow/Cohere/ZeroEntropy 客户端请求超时（秒） |
-| `MEM0_RERANK_MAX_RETRIES` | SDK 默认 | Cohere / ZeroEntropy 客户端最大重试次数 |
-| `MEM0_RERANK_REQUEST_DELAY` | `0` | LLMReranker 逐文档调 LLM 时每次请求间隔（秒），防 RPM 限制 |
+| `MEM0_RERANK_MAX_RETRIES` | `3` | SiliconFlow/Cohere/ZeroEntropy 客户端最大重试次数 |
+| `MEM0_RERANK_REQUEST_DELAY` | `0` | SiliconFlow 分批请求 / LLMReranker 逐文档调 LLM 时的请求间隔（秒），防 RPM 限制 |
 
 ### 记忆衰减
 

@@ -18,6 +18,7 @@ services:
     - ../mem0:/app/mem0:ro
     - ./config.json:/app/config.json:ro
     - ../pyproject.toml:/app/pyproject.toml:ro
+    - /etc/localtime:/etc/localtime:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,12 +35,13 @@ services:
     - JWT_SECRET=${JWT_SECRET}
     - AUTH_DISABLED=${AUTH_DISABLED:-false}
     - MEM0_TELEMETRY=${MEM0_TELEMETRY:-true}
+    - TZ=Asia/Shanghai
     healthcheck:
       test:
       - CMD
       - python3
       - -c
-      - import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')
+      - import urllib.request; urllib.request.urlopen("http://localhost:8000/docs")
       interval: 10s
       timeout: 5s
       retries: 3
@@ -52,6 +54,7 @@ services:
     environment:
     - POSTGRES_USER=${POSTGRES_USER:-postgres}
     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    - TZ=Asia/Shanghai
     healthcheck:
       test:
       - CMD-SHELL
@@ -62,6 +65,7 @@ services:
     volumes:
     - ./data/postgres:/var/lib/postgresql/data
     - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    - /etc/localtime:/etc/localtime:ro
     ports:
     - 8432:5432
   mem0-dashboard:
@@ -76,9 +80,12 @@ services:
     - NEXT_PUBLIC_INSTANCE_NAME=Mem0
     - NODE_ENV=${NODE_ENV:-development}
     - DASHBOARD_URL=${DASHBOARD_URL:-http://localhost:3002}
+    - TZ=Asia/Shanghai
     depends_on:
       mem0:
         condition: service_started
+    volumes:
+    - /etc/localtime:/etc/localtime:ro
     healthcheck:
       test:
       - CMD
@@ -95,15 +102,18 @@ services:
     - 3003:3000
     volumes:
     - ./data/falkordb:/var/lib/falkordb/data
+    - /etc/localtime:/etc/localtime:ro
     networks:
     - mem0_network
+    environment:
+    - TZ=Asia/Shanghai
     command:
     - redis-server
     - --dir
     - /data
     - --save
-    - '60'
-    - '1'
+    - "60"
+    - "1"
     restart: unless-stopped
     healthcheck:
       test:
