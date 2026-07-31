@@ -1116,9 +1116,22 @@ class Memory(MemoryBase):
                 else:
                     meta["lane"] = lane
 
-        # Filter out non-dict items (LLM may return unexpected types in the "memory" field)
-        extracted_memories = [m for m in extracted_memories if isinstance(m, dict)]
-        logger.info("add Phase 2.5: filtered to %d valid dict memories", len(extracted_memories))
+        # Normalize: LLM may return bare strings in the "memory" field.
+        # Wrap them as {"text": str_value} instead of dropping them.
+        _normalized = []
+        _salvaged = 0
+        for _m in extracted_memories:
+            if isinstance(_m, dict):
+                _normalized.append(_m)
+            elif isinstance(_m, str) and _m.strip():
+                _normalized.append({"text": _m.strip()})
+                _salvaged += 1
+        if _salvaged:
+            logger.warning(
+                "add Phase 2.5: salvaged %d bare strings as memories (LLM returned non-dict in memory array)",
+                _salvaged,
+            )
+        extracted_memories = _normalized
 
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
@@ -3062,9 +3075,22 @@ class AsyncMemory(MemoryBase):
                 else:
                     meta["lane"] = lane
 
-        # Filter out non-dict items (LLM may return unexpected types in the "memory" field)
-        extracted_memories = [m for m in extracted_memories if isinstance(m, dict)]
-        logger.info("add Phase 2.5: filtered to %d valid dict memories", len(extracted_memories))
+        # Normalize: LLM may return bare strings in the "memory" field.
+        # Wrap them as {"text": str_value} instead of dropping them.
+        _normalized = []
+        _salvaged = 0
+        for _m in extracted_memories:
+            if isinstance(_m, dict):
+                _normalized.append(_m)
+            elif isinstance(_m, str) and _m.strip():
+                _normalized.append({"text": _m.strip()})
+                _salvaged += 1
+        if _salvaged:
+            logger.warning(
+                "add Phase 2.5: salvaged %d bare strings as memories (LLM returned non-dict in memory array)",
+                _salvaged,
+            )
+        extracted_memories = _normalized
 
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
