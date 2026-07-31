@@ -18,7 +18,7 @@ class OpenAIEmbedding(EmbeddingBase):
         # Only pass `dimensions` to the API when the user set embedding_dims; non-matryoshka
         # OpenAI-compatible backends (vLLM, Voyage, etc.) reject the parameter
         self._pass_dimensions_to_api = self.config.embedding_dims is not None
-        self.config.embedding_dims = self.config.embedding_dims or 1536
+        self.config.embedding_dims = self.config.embedding_dims or None
 
         api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
         base_url = (
