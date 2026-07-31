@@ -438,16 +438,19 @@ Hermes Agent 的 mem0 插件（`plugins/memory/mem0`）通过 HTTP 调用本 For
 
 | 步骤 | 位置 | 操作 |
 |:-----|:-----|:-----|
-| 1 | 本 Fork `server/.env.example` | 已提供 `MEM0_SYNC_TIMEOUT` 参考值（建议 ≥120 秒），**仅供文档参考**，实际超时配置在 Hermes 侧 |
-| 2 | `~/.hermes/plugins/memory/mem0/_backend.py` | 修改 `httpx.Client(timeout=...)` 的值，从默认 30 改为 **120 或更高** |
+| 1 | Hermes `~/.hermes/mem0.json` | 确保 `api_key` 已配置（mem0 server 的 API Key），否则 401 |
+| 2 | Hermes `_backend.py` | 修改 `httpx.Client(timeout=...)` 从 30 改为 **120+** |
 
 ```python
-# _backend.py — 修改前
-self.client = httpx.Client(timeout=30)
-
-# 修改后
-self.client = httpx.Client(timeout=120)
+# _backend.py
+self.client = httpx.Client(timeout=120)  # 原为 30
 ```
+
+### ⚠️ 向量存储持久化（重要）
+
+**`config.json` 必须配置 `vector_store`**，否则 mem0 默认用内存 Qdrant——容器重启后所有记忆丢失。
+
+`config.json.example` 已含 `pgvector` 配置。PostgreSQL（`pgvector/pgvector:pg17`）已预装 pgvector 扩展，启动后自动建表。
 
 ### 队列重入 Bug（历史问题，已修复）
 
