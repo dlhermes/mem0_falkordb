@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time as _time
 from collections import OrderedDict
 
 from mem0.memory.utils import format_entities, sanitize_relationship_for_cypher
@@ -259,11 +260,21 @@ class MemoryGraph:
 
     def add(self, data, filters):
         """Add data to the graph."""
+        _t0 = _time.perf_counter()
+        _data_len = len(data) if isinstance(data, str) else 0
+        logger.info(
+            "graph add start: data_len=%d, user_id=%s",
+            _data_len, filters.get("user_id", "?"),
+        )
+
         self._ensure_user_graph_indexes(filters["user_id"])
         entity_type_map = self._retrieve_nodes_from_data(data, filters)
+        logger.info("graph add: extracted %d entity types", len(entity_type_map))
+
         to_be_added = self._establish_nodes_relations_from_data(
             data, filters, entity_type_map
         )
+        logger.info("graph add: extracted %d relations (pre-filter)", len(to_be_added))
 
         # Filter low-quality relations before writing (mirrors search-path quality gates)
         _before = len(to_be_added)
@@ -276,7 +287,7 @@ class MemoryGraph:
         ]
         _filtered = _before - len(to_be_added)
         if _filtered:
-            logger.debug("Filtered %d low-quality relations (self-ref/related_to/fragment)", _filtered)
+            logger.info("graph add: filtered %d low-quality relations (self-ref/related_to/fragment)", _filtered)
 
         search_output = self._search_graph_db(
             node_list=list(entity_type_map.keys()), filters=filters
@@ -288,18 +299,28 @@ class MemoryGraph:
         deleted_entities = self._delete_entities(to_be_deleted, filters)
         added_entities = self._add_entities(to_be_added, filters, entity_type_map)
 
+        _elapsed = _time.perf_counter() - _t0
+        logger.info(
+            "graph add done: added=%d, deleted=%d, elapsed=%.2fs",
+            len(added_entities), len(deleted_entities), _elapsed,
+        )
         return {"deleted_entities": deleted_entities, "added_entities": added_entities}
 
     def search(self, query, filters, limit=100):
         """Search for memories and related graph data."""
+        _t0 = _time.perf_counter()
+        logger.info("graph search start: query=%.80s, user_id=%s", query, filters.get("user_id", "?"))
+
         node_list = _tokenize_query_for_search(query)
         if not node_list:
+            logger.info("graph search done: 0 results (no tokens), elapsed=%.2fs", _time.perf_counter() - _t0)
             return []
         search_output = self._search_graph_db(
             node_list=node_list, filters=filters
         )
 
         if not search_output:
+            logger.info("graph search done: 0 results (no vector hits), elapsed=%.2fs", _time.perf_counter() - _t0)
             return []
 
         search_outputs_sequence = [
@@ -330,7 +351,7 @@ class MemoryGraph:
                 {"source": src, "relationship": rel, "destination": dst}
             )
 
-        logger.info(f"Returned {len(search_results)} search results")
+        logger.info("graph search done: %d results, elapsed=%.2fs", len(search_results), _time.perf_counter() - _t0)
         return search_results
 
     def delete_all(self, filters):
@@ -421,7 +442,14 @@ class MemoryGraph:
                         f"- user：仅当实体确实是用户/人且无法确定具体身份时使用\n"
                         f"- other：不属于以上任何类别的实体\n\n"
                         f"注意：关系类型名（如 related_to）、指标变量名（如 wrqm/s、r/s、us）"
-                        f"不应作为实体提取。Python 模块名（如 httpx.client）应标记为 tool 而非 user。"
+                        f"不应作为实体提取。Python 模块名（如 httpx.client）应标记为 tool 而非 user。\n\n"
+                        f"以下技术标识符***禁止***作为实体提取：\n"
+                        f"- 代码符号：变量名、函数名、类名（如 original_memories、get_user、HttpClient）\n"
+                        f"- 文件路径/行号：代码位置、文件名、地址引用（如 main.py、config.yaml、main.py:1816）\n"
+                        f"- 内部表名/集合名（如 mem0_memories表、users_collection）\n\n"
+                        f"区分规则：完整的技术产品/开源项目/行业术语（如 mem0、PostgreSQL、pgvector、rerank、Docker、PyTorch）"
+                        f"应正常提取为 tool/concept/product；"
+                        f"代码片段、内部变量、私有路径、表引用等实现细节则禁止提取。"
                     ),
                 },
                 {"role": "user", "content": data},
@@ -726,6 +754,13 @@ class MemoryGraph:
 
             source_node = self._search_node_by_embedding(source_embedding, filters)
             dest_node = self._search_node_by_embedding(dest_embedding, filters)
+
+            if source_node is not None and dest_node is not None and source_node == dest_node:
+                logger.debug(
+                    "Skipping self-referencing relation: %s -[%s]-> %s (both resolve to node %s)",
+                    source, relationship, destination, source_node,
+                )
+                continue
 
             if not dest_node and source_node:
                 dest_merge_str, params = self._build_node_props(
