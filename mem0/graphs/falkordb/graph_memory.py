@@ -321,6 +321,33 @@ class MemoryGraph:
             node_list=node_list, filters=filters
         )
 
+        # Supplemental recall: match query tokens against relation_cn (Chinese relation names)
+        _seen_relation_ids = set(r.get("relation_id") for r in search_output)
+        _cn_label = "__Entity__" if self.use_base_label else "Node"
+        _cn_uid = self._user_id(filters)
+        for token in node_list[:5]:
+            try:
+                _cn_results = self.graph.query(
+                    f"""
+                    MATCH (a:`{_cn_label}`)-[r]->(b:`{_cn_label}`)
+                    WHERE r.relation_cn CONTAINS $token
+                    RETURN a.name AS source, id(a) AS source_id, type(r) AS relationship,
+                           id(r) AS relation_id, b.name AS destination, id(b) AS destination_id
+                    LIMIT {int(limit)}
+                    """,
+                    params={"token": token},
+                    user_id=_cn_uid,
+                )
+                for item in _cn_results:
+                    rid = item.get("relation_id")
+                    if rid not in _seen_relation_ids:
+                        _seen_relation_ids.add(rid)
+                        search_output.append(item)
+            except Exception:
+                logger.debug(
+                    "relation_cn CONTAINS query failed for token '%s'", token, exc_info=True,
+                )
+
         if not search_output:
             logger.info("graph search done: 0 results (no vector hits), elapsed=%.2fs", _time.perf_counter() - _t0)
             return []
@@ -774,6 +801,7 @@ class MemoryGraph:
                 params["source_id"] = source_node
                 params["destination_name"] = destination
                 params["destination_embedding"] = dest_embedding
+                params["relation_cn"] = item.get("relation_cn", "")
 
                 cypher = f"""
                 MATCH (source)
@@ -793,9 +821,11 @@ class MemoryGraph:
                 MERGE (source)-[r:{_safe_relationship}]->(destination)
                 ON CREATE SET
                     r.created = timestamp(),
-                    r.mentions = 1
+                    r.mentions = 1,
+                    r.relation_cn = $relation_cn
                 ON MATCH SET
-                    r.mentions = coalesce(r.mentions, 0) + 1
+                    r.mentions = coalesce(r.mentions, 0) + 1,
+                    r.relation_cn = $relation_cn
                 RETURN source.name AS source, type(r) AS relationship, destination.name AS target
                 """
 
@@ -806,6 +836,7 @@ class MemoryGraph:
                 params["destination_id"] = dest_node
                 params["source_name"] = source
                 params["source_embedding"] = source_embedding
+                params["relation_cn"] = item.get("relation_cn", "")
 
                 cypher = f"""
                 MATCH (destination)
@@ -825,9 +856,11 @@ class MemoryGraph:
                 MERGE (source)-[r:{_safe_relationship}]->(destination)
                 ON CREATE SET
                     r.created = timestamp(),
-                    r.mentions = 1
+                    r.mentions = 1,
+                    r.relation_cn = $relation_cn
                 ON MATCH SET
-                    r.mentions = coalesce(r.mentions, 0) + 1
+                    r.mentions = coalesce(r.mentions, 0) + 1,
+                    r.relation_cn = $relation_cn
                 RETURN source.name AS source, type(r) AS relationship, destination.name AS target
                 """
 
@@ -835,6 +868,7 @@ class MemoryGraph:
                 _, params = self._build_node_props(filters)
                 params["source_id"] = source_node
                 params["destination_id"] = dest_node
+                params["relation_cn"] = item.get("relation_cn", "")
 
                 cypher = f"""
                 MATCH (source)
@@ -848,8 +882,12 @@ class MemoryGraph:
                 ON CREATE SET
                     r.created_at = timestamp(),
                     r.updated_at = timestamp(),
-                    r.mentions = 1
-                ON MATCH SET r.mentions = coalesce(r.mentions, 0) + 1
+                    r.mentions = 1,
+                    r.relation_cn = $relation_cn
+                ON MATCH SET
+                    r.mentions = coalesce(r.mentions, 0) + 1,
+                    r.updated_at = timestamp(),
+                    r.relation_cn = $relation_cn
                 RETURN source.name AS source, type(r) AS relationship, destination.name AS target
                 """
 
@@ -865,6 +903,7 @@ class MemoryGraph:
                 params["dest_name"] = destination
                 params["source_embedding"] = source_embedding
                 params["dest_embedding"] = dest_embedding
+                params["relation_cn"] = item.get("relation_cn", "")
 
                 cypher = f"""
                 MERGE (source {source_label} {{{source_props_str}}})
@@ -884,8 +923,8 @@ class MemoryGraph:
                             destination.embedding = vecf32($dest_embedding)
                 WITH source, destination
                 MERGE (source)-[rel:{_safe_relationship}]->(destination)
-                ON CREATE SET rel.created = timestamp(), rel.mentions = 1
-                ON MATCH SET rel.mentions = coalesce(rel.mentions, 0) + 1
+                ON CREATE SET rel.created = timestamp(), rel.mentions = 1, rel.relation_cn = $relation_cn
+                ON MATCH SET rel.mentions = coalesce(rel.mentions, 0) + 1, rel.relation_cn = $relation_cn
                 RETURN source.name AS source, type(rel) AS relationship, destination.name AS target
                 """
 
@@ -952,6 +991,7 @@ class MemoryGraph:
             if "source" not in item or "relationship" not in item or "destination" not in item:
                 continue
             item["source"] = item["source"].lower().replace(" ", "_")
+            item["relation_cn"] = item["relationship"]
             item["relationship"] = sanitize_relationship_for_cypher(
                 item["relationship"].lower().replace(" ", "_")
             )
