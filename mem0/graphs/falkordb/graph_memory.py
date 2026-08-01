@@ -398,7 +398,8 @@ class MemoryGraph:
                     MATCH (a:`{_cn_label}`)-[r]->(b:`{_cn_label}`)
                     WHERE {" OR ".join(_or_clauses)}
                     RETURN a.name AS source, id(a) AS source_id, type(r) AS relationship,
-                           id(r) AS relation_id, b.name AS destination, id(b) AS destination_id
+                           id(r) AS relation_id, b.name AS destination, id(b) AS destination_id,
+                           r.relation_cn AS relation_cn
                     LIMIT {int(limit * 3)}
                     """,
                     params=_or_params,
@@ -446,7 +447,7 @@ class MemoryGraph:
             if len(src) < 2 or len(dst) < 2:
                 continue
             search_results.append(
-                {"source": src, "relationship": rel, "destination": dst}
+                {"source": src, "relationship": rel, "destination": dst, "relation_cn": item.get("relation_cn", "")}
             )
 
         logger.info(
@@ -731,13 +732,15 @@ class MemoryGraph:
                 MATCH (n {self.node_label})-[r]->(m {self.node_label}{match_props})
                 WHERE id(n) = $node_id
                 RETURN n.name AS source, id(n) AS source_id, type(r) AS relationship,
-                       id(r) AS relation_id, m.name AS destination, id(m) AS destination_id
+                       id(r) AS relation_id, m.name AS destination, id(m) AS destination_id,
+                       r.relation_cn AS relation_cn
                 """
                 in_query = f"""
                 MATCH (n {self.node_label})<-[r]-(m {self.node_label}{match_props})
                 WHERE id(n) = $node_id
                 RETURN m.name AS source, id(m) AS source_id, type(r) AS relationship,
-                       id(r) AS relation_id, n.name AS destination, id(n) AS destination_id
+                       id(r) AS relation_id, n.name AS destination, id(n) AS destination_id,
+                       r.relation_cn AS relation_cn
                 """
 
                 out_results = self.graph.query(

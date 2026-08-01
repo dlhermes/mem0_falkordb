@@ -29,7 +29,8 @@
     "config": {
       "host": "falkordb",
       "port": 6379,
-      "database": "mem0"
+      "database": "mem0",
+      "threshold": 0.6
     }
   },
   "vector_store": {
@@ -46,6 +47,6 @@
   "enable_search_depth": true,
   "enable_lane": true,
   "correction_mode": true,
-  "rerank_score_threshold": 0.45,
+  "rerank_score_threshold": 0.4,
   "custom_instructions": "提取事实时，为每条记忆标注时间属性：\n- PAST: 已发生的事件（如\"昨天去了医院\"）\n- PRESENT: 当前状态（如\"住在北京\"）\n- FUTURE: 计划/意图（如\"下周要去东京\"）\n- TIMELESS: 永恒事实（如\"姓名是张三\"）\n\n将 temporal 值写入 metadata.temporal 字段。\n如果有明确日期，同时写入 metadata.temporal_date（ISO 格式 yyyy-MM-dd）。\n\n## 记忆质量约束\n\n以下内容**禁止**提取为记忆（它们不是持久的用户知识）：\n- 对话过程描述：如\"用户说xxx\"、\"助手回复了xxx\"、\"用户把待完成的都完成呀\"\n- 操作日志/状态：如\"已提交并推送\"、\"修复了bug\"、\"容器重启完成\"、\"审计通过\"\n- 元信息：如\"全量审计发现3个问题\"、\"文件已同步到本地\"\n- 助手的自我描述：如\"我是一个AI助手\"\n\n判断标准：这条信息在两周后的对话中，是否仍有可能被引用？\n- 是 → 提取为记忆\n- 否 → 跳过\n\n正确示例：\n- \"发哥的服务器在 10.200.1.163 上，部署了 mem0 和 FalkorDB\"\n- \"pgvector 的 _get_table_vector_dim 方法存在 atttypmod - 4 的 bug\"\n- \"发哥偏好一次性批量修复同类型问题\"\n\n错误示例（禁止提取）：\n- \"用户要求修复 pgvector 的 bug\"\n- \"已提交代码并推送到 GitHub\"\n- \"全量审计全部通过\"\n"
 }

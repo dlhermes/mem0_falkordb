@@ -70,7 +70,18 @@ def list_entities(_auth=Depends(verify_auth)):
 @router.delete("/{entity_type}/{entity_id}", response_model=MessageResponse)
 def delete_entity(entity_type: EntityType, entity_id: str, _auth=Depends(require_admin)):
     try:
-        get_memory_instance().delete_all(**{TYPE_TO_FIELD[entity_type]: entity_id})
+        memory = get_memory_instance()
+        if entity_type == "user":
+            # user 类型：保持原有行为，delete_all(user_id=...) 路径正常
+            memory.delete_all(user_id=entity_id)
+        else:
+            # agent/run 类型：逐条删除记忆，每条记忆的 payload 携带 user_id，
+            # graph 清除依赖 user_id 定位用户图，避免 delete_all 因缺少 user_id 触发 KeyError
+            field = TYPE_TO_FIELD[entity_type]
+            filters = {field: entity_id}
+            memories = memory.vector_store.list(filters=filters)[0]
+            for m in memories:
+                memory.delete(m.id)
     except Exception:
         raise upstream_error()
     return MessageResponse(message="Entity deleted")
