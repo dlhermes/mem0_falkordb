@@ -337,8 +337,9 @@ class MemoryGraph:
 
         search_results = []
         for idx in top_indices:
-            if scores[idx] <= 0:
-                continue
+            # NOTE: rank_bm25 yields NEGATIVE scores on tiny corpora (df ≈ N → idf < 0),
+            # so `score <= 0` must NOT be used as a hard filter — vector search already
+            # confirmed relevance; BM25 only orders the candidates. Top-5 cap keeps it bounded.
             item = search_output[idx]
             src = item["source"]
             rel = item["relationship"]
@@ -596,7 +597,9 @@ class MemoryGraph:
             label = "__Entity__" if self.use_base_label else "Node"
 
             # Build WHERE clauses for vector search filtering
-            where_clauses = ["score >= $threshold"]
+            # NOTE: FalkorDB queryNodes returns COSINE DISTANCE (0=identical, larger=less similar),
+            # so threshold (similarity semantics, e.g. 0.7) must be inverted: keep distance <= 1-threshold
+            where_clauses = ["score <= $max_distance"]
             if filters.get("agent_id"):
                 where_clauses.append("node.agent_id = $agent_id")
             if filters.get("run_id"):
@@ -614,7 +617,7 @@ class MemoryGraph:
 
             params = {
                 "n_embedding": n_embedding,
-                "threshold": self.threshold,
+                "max_distance": max(0.0, 1.0 - self.threshold),
                 **base_params,
             }
 
@@ -903,7 +906,9 @@ class MemoryGraph:
         uid = self._user_id(filters)
         label = "__Entity__" if self.use_base_label else "Node"
 
-        where_clauses = ["score >= $threshold"]
+        # NOTE: FalkorDB queryNodes returns COSINE DISTANCE (0=identical, larger=less similar),
+        # so threshold (similarity semantics, e.g. 0.7) must be inverted: keep distance <= 1-threshold
+        where_clauses = ["score <= $max_distance"]
         if filters.get("agent_id"):
             where_clauses.append("node.agent_id = $agent_id")
         if filters.get("run_id"):
@@ -921,7 +926,7 @@ class MemoryGraph:
 
         params = {
             "embedding": embedding,
-            "threshold": self.threshold,
+            "max_distance": max(0.0, 1.0 - self.threshold),
         }
         if filters.get("agent_id"):
             params["agent_id"] = filters["agent_id"]
@@ -938,10 +943,18 @@ class MemoryGraph:
     # ------------------------------------------------------------------
 
     def _remove_spaces_from_entities(self, entity_list):
+        valid = []
         for item in entity_list:
+            if not isinstance(item, dict):
+                continue
+            if "destination" not in item and "target" in item:
+                item["destination"] = item.pop("target")
+            if "source" not in item or "relationship" not in item or "destination" not in item:
+                continue
             item["source"] = item["source"].lower().replace(" ", "_")
             item["relationship"] = sanitize_relationship_for_cypher(
                 item["relationship"].lower().replace(" ", "_")
             )
             item["destination"] = item["destination"].lower().replace(" ", "_")
-        return entity_list
+            valid.append(item)
+        return valid
