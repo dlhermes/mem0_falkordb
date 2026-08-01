@@ -23,6 +23,8 @@ except ImportError:
 
 try:
     import jieba
+
+    jieba.setLogLevel(logging.WARNING)
     _JIEBA_AVAILABLE = True
 except ImportError:
     jieba = None
