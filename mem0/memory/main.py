@@ -1446,11 +1446,19 @@ class Memory(MemoryBase):
     def _add_to_graph(self, messages, filters):
         added_entities = []
         if self.graph:
-            if filters.get("user_id") is None:
-                filters["user_id"] = "user"
+            try:
+                if filters.get("user_id") is None:
+                    filters["user_id"] = "user"
 
-            data = "\n".join([msg["content"] for msg in messages if "content" in msg and msg["role"] != "system"])
-            added_entities = self.graph.add(data, filters)
+                data = "\n".join([msg["content"] for msg in messages if "content" in msg and msg["role"] != "system"])
+                added_entities = self.graph.add(data, filters)
+                logger.info(
+                    "graph write success: added=%d, deleted=%d",
+                    len(added_entities.get("added_entities", [])),
+                    len(added_entities.get("deleted_entities", [])),
+                )
+            except Exception:
+                logger.error("graph write failed", exc_info=True)
 
         return added_entities
 
@@ -3436,11 +3444,19 @@ class AsyncMemory(MemoryBase):
     async def _add_to_graph(self, messages, filters):
         added_entities = []
         if self.graph:
-            if filters.get("user_id") is None:
-                filters["user_id"] = "user"
+            try:
+                if filters.get("user_id") is None:
+                    filters["user_id"] = "user"
 
-            data = "\n".join([msg["content"] for msg in messages if "content" in msg and msg["role"] != "system"])
-            added_entities = await asyncio.to_thread(self.graph.add, data, filters)
+                data = "\n".join([msg["content"] for msg in messages if "content" in msg and msg["role"] != "system"])
+                added_entities = await asyncio.to_thread(self.graph.add, data, filters)
+                logger.info(
+                    "graph write success: added=%d, deleted=%d",
+                    len(added_entities.get("added_entities", [])),
+                    len(added_entities.get("deleted_entities", [])),
+                )
+            except Exception:
+                logger.error("graph write failed", exc_info=True)
 
         return added_entities
 
