@@ -1,6 +1,8 @@
 """FalkorDB graph memory implementation for Mem0."""
 
+import json
 import logging
+import os
 import re
 import time as _time
 from collections import OrderedDict
@@ -53,6 +55,54 @@ _CHINESE_STOP_WORDS = frozenset({
     "可以", "什么", "怎么", "哪", "那", "这", "很", "吗", "呢",
     "啊", "吧", "哦", "嗯", "哈", "呀", "嘛", "么",
 })
+
+_RELATION_CN_SYNONYM_GROUPS = [
+    frozenset({"部署", "安装", "上线", "发布", "挂在", "跑在"}),
+    frozenset({"偏好", "喜欢", "喜爱", "钟爱"}),
+    frozenset({"修复", "解决", "修补", "改正"}),
+    frozenset({"使用", "采用", "运用", "利用"}),
+    frozenset({"属于", "隶属", "归属"}),
+    frozenset({"负责", "管理", "主管"}),
+    frozenset({"创建", "建立", "新建", "搭建"}),
+    frozenset({"配置", "设置", "设定"}),
+    frozenset({"依赖", "依存"}),
+    frozenset({"包含", "包括"}),
+    frozenset({"支持", "兼容", "适配"}),
+    frozenset({"监控", "监视", "巡检"}),
+    frozenset({"连接", "接入", "对接"}),
+    frozenset({"删除", "移除", "清除"}),
+    frozenset({"测试", "验证", "校验"}),
+]
+_RELATION_CN_SYNONYM_LOOKUP = {}
+for _g in _RELATION_CN_SYNONYM_GROUPS:
+    for _w in _g:
+        _RELATION_CN_SYNONYM_LOOKUP[_w] = _g
+
+_threshold_cache = {"mtime": 0, "value": 0.7}
+
+
+def _read_dynamic_threshold():
+    env_val = os.environ.get("MEM0_GRAPH_THRESHOLD")
+    if env_val is not None:
+        return float(env_val)
+    config_path = os.environ.get("MEM0_CONFIG_PATH")
+    if config_path:
+        try:
+            cur_mtime = os.path.getmtime(config_path)
+            if cur_mtime != _threshold_cache["mtime"]:
+                with open(config_path) as f:
+                    cfg = json.load(f)
+                gs = cfg.get("graph_store", {})
+                if isinstance(gs, dict):
+                    t = gs.get("threshold")
+                    if t is None and isinstance(gs.get("config"), dict):
+                        t = gs["config"].get("threshold")
+                    if t is not None:
+                        _threshold_cache["value"] = float(t)
+                _threshold_cache["mtime"] = cur_mtime
+        except Exception:
+            pass
+    return _threshold_cache["value"]
 
 
 def _tokenize_cjk(text):
@@ -187,11 +237,10 @@ class MemoryGraph:
         elif hasattr(self.config.llm, "config"):
             llm_config = self.config.llm.config
         self.llm = LlmFactory.create(self.llm_provider, llm_config)
-        self.threshold = (
-            self.config.graph_store.threshold
-            if hasattr(self.config.graph_store, "threshold")
-            else 0.7
-        )
+
+    @property
+    def threshold(self):
+        return _read_dynamic_threshold()
 
     # ------------------------------------------------------------------
     # Index management
@@ -320,22 +369,39 @@ class MemoryGraph:
         search_output = self._search_graph_db(
             node_list=node_list, filters=filters
         )
+        _vector_hits = len(search_output)
 
         # Supplemental recall: match query tokens against relation_cn (Chinese relation names)
         _seen_relation_ids = set(r.get("relation_id") for r in search_output)
         _cn_label = "__Entity__" if self.use_base_label else "Node"
         _cn_uid = self._user_id(filters)
+
+        _expanded_tokens = set()
         for token in node_list[:5]:
+            _group = _RELATION_CN_SYNONYM_LOOKUP.get(token)
+            if _group is not None:
+                _expanded_tokens.update(_group)
+            else:
+                _expanded_tokens.add(token)
+
+        if _expanded_tokens:
+            _or_clauses = []
+            _or_params = {}
+            for _i, _token in enumerate(_expanded_tokens):
+                _pname = f"_cnt{_i}"
+                _or_clauses.append(f"r.relation_cn CONTAINS ${_pname}")
+                _or_params[_pname] = _token
+
             try:
                 _cn_results = self.graph.query(
                     f"""
                     MATCH (a:`{_cn_label}`)-[r]->(b:`{_cn_label}`)
-                    WHERE r.relation_cn CONTAINS $token
+                    WHERE {" OR ".join(_or_clauses)}
                     RETURN a.name AS source, id(a) AS source_id, type(r) AS relationship,
                            id(r) AS relation_id, b.name AS destination, id(b) AS destination_id
-                    LIMIT {int(limit)}
+                    LIMIT {int(limit * 3)}
                     """,
-                    params={"token": token},
+                    params=_or_params,
                     user_id=_cn_uid,
                 )
                 for item in _cn_results:
@@ -345,8 +411,10 @@ class MemoryGraph:
                         search_output.append(item)
             except Exception:
                 logger.debug(
-                    "relation_cn CONTAINS query failed for token '%s'", token, exc_info=True,
+                    "relation_cn CONTAINS query failed for tokens %s", _expanded_tokens, exc_info=True,
                 )
+
+        _cn_hits = len(search_output) - _vector_hits
 
         if not search_output:
             logger.info("graph search done: 0 results (no vector hits), elapsed=%.2fs", _time.perf_counter() - _t0)
@@ -381,7 +449,10 @@ class MemoryGraph:
                 {"source": src, "relationship": rel, "destination": dst}
             )
 
-        logger.info("graph search done: %d results, elapsed=%.2fs", len(search_results), _time.perf_counter() - _t0)
+        logger.info(
+            "graph search done: vector_hits=%d, cn_hits=%d, total=%d, elapsed=%.2fs",
+            _vector_hits, _cn_hits, len(search_results), _time.perf_counter() - _t0,
+        )
         return search_results
 
     def delete_all(self, filters):
