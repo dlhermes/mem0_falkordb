@@ -275,7 +275,7 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 | 记忆事实提取 | `mem0/configs/prompts.py` `ADDITIVE_EXTRACTION_PROMPT` | 中文化 + JSON 输出格式保留 |
 | 图实体检测 | `mem0/graphs/falkordb/graph_memory.py` | 中文 system prompt + tool call 指令 |
 | 图关系提取 | `mem0/graphs/utils.py` `EXTRACT_RELATIONS_PROMPT` | 中文化 + 语言强制指令 |
-| Cypher 安全 | `mem0/memory/utils.py` `sanitize_relationship_for_cypher` | CJK 字符 fallback → underscore → 空值兜底 `related_to` |
+| Cypher 安全 | `mem0/memory/utils.py` `sanitize_relationship_for_cypher` | 中文关系名映射英文语义动词（52 条映射表，如 偏好→prefers、部署于→deployed_on）→ 未命中兜底 `related_to` → 纯 ASCII 输出（FalkorDB 关系类型仅支持 ASCII） |
 | 图标签安全 | `mem0/graphs/falkordb/graph_memory.py` `_add_entities` | entity_type / relationship 自动 ASCII sanitize（FalkorDB 标签仅支持 ASCII）|
 || CJK BM25 分词 | `mem0/graphs/falkordb/graph_memory.py` `_tokenize_cjk` | jieba 词级切分 + 非中文空格切分，BM25 关键词匹配精度提升 |
 || spaCy 英文 NLP | `mem0/utils/spacy_models.py` | 英文实体提取 + 词形还原。中英混杂场景需安装：`pip install spacy && python -m spacy download en_core_web_sm` |
