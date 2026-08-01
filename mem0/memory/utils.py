@@ -264,7 +264,74 @@ def process_telemetry_filters(filters):
 
 
 def sanitize_relationship_for_cypher(relationship) -> str:
-    """Sanitize relationship text for Cypher queries by replacing problematic characters."""
+    """Sanitize relationship text for Cypher queries.
+
+    FalkorDB relationship type names only accept ASCII identifiers.
+    Chinese/Unicode relationship verbs are mapped to English equivalents;
+    unmapped non-ASCII input falls through to ``"related_to"``.
+    """
+    _CHINESE_TO_ENGLISH = {
+        # From EXTRACT_RELATIONS_PROMPT example list (9 explicit examples)
+        "偏好": "prefers",
+        "部署于": "deployed_on",
+        "修复了": "fixed",
+        "配置了": "configured",
+        "属于": "belongs_to",
+        "负责": "responsible_for",
+        "使用": "uses",
+        "创建": "created",
+        "部署到": "deployed_to",
+        # Additional common Chinese relation verbs
+        "部署": "deploys",
+        "配置": "configures",
+        "修复": "fixes",
+        "讨论": "discusses",
+        "了解": "knows_about",
+        "管理": "manages",
+        "开发": "develops",
+        "测试": "tests",
+        "监控": "monitors",
+        "依赖": "depends_on",
+        "包含": "contains",
+        "拥有": "owns",
+        "位于": "located_in",
+        "工作于": "works_at",
+        "喜欢": "likes",
+        "支持": "supports",
+        "需要": "requires",
+        "提供": "provides",
+        "维护": "maintains",
+        "优化": "optimizes",
+        "实现": "implements",
+        "运行于": "runs_on",
+        "存储于": "stored_in",
+        "连接": "connects_to",
+        "设计": "designed",
+        "调用": "calls",
+        "发布": "publishes",
+        "学习": "learns",
+        "分析": "analyzes",
+        "处理": "processes",
+        "生成": "generates",
+        "检测": "detects",
+        "决定": "decides",
+        "影响": "affects",
+        "投资": "invests_in",
+        "领导": "leads",
+        "合作": "collaborates_with",
+        "报告": "reports_to",
+        "审核": "reviews",
+        "批准": "approves",
+        "拒绝": "rejects",
+        "访问": "accesses",
+        "修改": "modifies",
+        "删除": "deletes",
+        "添加": "adds",
+        "合并": "merges",
+    }
+    if relationship in _CHINESE_TO_ENGLISH:
+        return _CHINESE_TO_ENGLISH[relationship]
+
     char_map = {
         "...": "_ellipsis_",
         "…": "_ellipsis_",
@@ -307,16 +374,13 @@ def sanitize_relationship_for_cypher(relationship) -> str:
         "-": "_",
     }
 
-    # Apply replacements and clean up
     sanitized = relationship
     for old, new in char_map.items():
         sanitized = sanitized.replace(old, new)
 
     sanitized = re.sub(r"_+", "_", sanitized).strip("_")
-    # Fallback: replace any remaining non-ASCII/non-alnum chars (CJK etc) with underscore
-    sanitized = re.sub(r"[^\w]", "_", sanitized)
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", sanitized)
     sanitized = re.sub(r"_+", "_", sanitized).strip("_")
-    # If everything got stripped (e.g. pure CJK input), use a fallback
     return sanitized or "related_to"
 
 
