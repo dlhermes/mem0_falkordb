@@ -264,6 +264,20 @@ class MemoryGraph:
         to_be_added = self._establish_nodes_relations_from_data(
             data, filters, entity_type_map
         )
+
+        # Filter low-quality relations before writing (mirrors search-path quality gates)
+        _before = len(to_be_added)
+        to_be_added = [
+            item for item in to_be_added
+            if item["source"] != item["destination"]
+            and item["relationship"] != "related_to"
+            and len(item["source"]) >= 2
+            and len(item["destination"]) >= 2
+        ]
+        _filtered = _before - len(to_be_added)
+        if _filtered:
+            logger.debug("Filtered %d low-quality relations (self-ref/related_to/fragment)", _filtered)
+
         search_output = self._search_graph_db(
             node_list=list(entity_type_map.keys()), filters=filters
         )
