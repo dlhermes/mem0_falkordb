@@ -534,8 +534,11 @@ class Memory(MemoryBase):
 
         # Entity store is initialized lazily on first use
         self._entity_store = None
-        self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=int(os.environ.get("MEM0_GRAPH_MAX_WORKERS", "1"))
+        self._graph_write_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=int(os.environ.get("MEM0_GRAPH_MAX_WORKERS", "5"))
+        )
+        self._graph_search_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=int(os.environ.get("MEM0_GRAPH_SEARCH_WORKERS", "2"))
         )
 
         if self.config.graph_store.config:
@@ -908,7 +911,7 @@ class Memory(MemoryBase):
         # Non-blocking graph write — fire and forget
         if self.graph:
             graph_filters = effective_filters.copy()
-            self._executor.submit(self._add_to_graph, messages, graph_filters)
+            self._graph_write_executor.submit(self._add_to_graph, messages, graph_filters)
 
         scale_threshold_notice = detect_scale_threshold_from_add_result(self, vector_store_result)
         if temporal_usage_notice:
@@ -1134,6 +1137,27 @@ class Memory(MemoryBase):
                     mem["metadata"] = {"lane": lane}
                 else:
                     meta["lane"] = lane
+
+        # Phase 2.6: Importance keyword fallback (when LLM didn't output importance)
+        _importance_low_kw = ["测试", "验证", "查询", "建议", "待办", "需配置", "应该", "需要", "可以", "方案", "如何", "处理顺序", "步骤"]
+        _importance_high_kw = ["发哥", "偏好", "喜欢", "决定", "部署", "配置", "姓名", "住在"]
+        for mem in extracted_memories:
+            if not isinstance(mem, dict):
+                continue
+            meta = mem.get("metadata")
+            if meta and "importance" in meta:
+                continue
+            text = mem.get("text") or ""
+            if any(kw in text for kw in _importance_low_kw):
+                importance = 2
+            elif any(kw in text for kw in _importance_high_kw):
+                importance = 5
+            else:
+                importance = 3
+            if meta is None:
+                mem["metadata"] = {"importance": importance}
+            else:
+                meta["importance"] = importance
 
         # Normalize: LLM may return bare strings in the "memory" field.
         # Wrap them as {"text": str_value} instead of dropping them.
@@ -1798,9 +1822,10 @@ class Memory(MemoryBase):
             pass  # vector-only, no graph or rerank
         elif depth == "full":
             # Merge graph search results if graph store is enabled
+            graph_append = []
             if self.graph:
                 try:
-                    graph_future = self._executor.submit(self.graph.search, query, effective_filters, limit)
+                    graph_future = self._graph_search_executor.submit(self.graph.search, query, effective_filters, limit)
                     graph_relations = graph_future.result(timeout=15)
                     if graph_relations:
                         _graph_memories = []
@@ -1810,34 +1835,67 @@ class Memory(MemoryBase):
                             dst = r.get("destination", "")
                             if not src or not rel or not dst:
                                 continue
-                            _mem = f"{src} - {rel} -> {dst}"
+                            _relation_cn = (r.get("relation_cn", "") or "").strip()
+                            if _relation_cn:
+                                _mem = f"{src} {_relation_cn} {dst}"
+                            else:
+                                _mem = f"{src} - {rel} -> {dst}"
                             if len(_mem) < 10:
                                 continue
                             _graph_memories.append(
                                 {"id": str(uuid.uuid4()), "memory": _mem, "event": "ADD"}
                             )
-                        original_memories = list(original_memories) + _graph_memories
+                        graph_append = _graph_memories
+                except concurrent.futures.TimeoutError:
+                    logger.warning(
+                        "Graph search timed out after 15s — "
+                        "read pool (MEM0_GRAPH_SEARCH_WORKERS=%s) may be saturated; "
+                        "using vector store results only",
+                        os.environ.get("MEM0_GRAPH_SEARCH_WORKERS", "2"),
+                    )
                 except Exception as e:
-                    logger.warning(f"Graph search failed, using vector store results only: {e}")
+                    logger.warning(f"Graph search failed: {e}, using vector store results only")
 
             # Apply reranking if enabled and reranker is available
+            _rerank_applied = False
             if rerank and self.reranker and original_memories:
                 try:
                     logger.info("Rerank triggered: candidates=%d", len(original_memories))
                     reranked_memories = self.reranker.rerank(query, original_memories, limit)
                     original_memories = reranked_memories
+                    _rerank_applied = True
                 except Exception as e:
                     logger.warning(f"Reranking failed, using original results: {e}")
 
-            # Filter by rerank_score threshold (config: rerank_score_threshold, default 0 = no filter)
-            _rerank_threshold = getattr(self.config, "rerank_score_threshold", 0.0) or 0.0
-            if _rerank_threshold > 0 and original_memories:
-                _before = len(original_memories)
-                original_memories = [m for m in original_memories if m.get("rerank_score", 0) >= _rerank_threshold]
-                logger.info(
-                    "Rerank threshold filter: %d → %d (threshold=%.2f)",
-                    _before, len(original_memories), _rerank_threshold,
+            # Filter by rerank_score threshold only when rerank actually ran
+            if _rerank_applied:
+                _rerank_threshold = float(os.environ.get("MEM0_RERANK_SCORE_THRESHOLD", "0.4"))
+                _vector_fallback = float(os.environ.get("MEM0_VECTOR_SCORE_FALLBACK", "0.5"))
+                if _rerank_threshold > 0 and original_memories:
+                    _before = len(original_memories)
+                    filtered = []
+                    for m in original_memories:
+                        rs = m.get("rerank_score", 0)
+                        if rs >= _rerank_threshold:
+                            filtered.append(m)
+                        elif _vector_fallback > 0 and m.get("score", 0) >= _vector_fallback:
+                            filtered.append(m)
+                    original_memories = filtered
+                    logger.info(
+                        "Rerank threshold filter: %d → %d (rerank=%.2f, vector_fallback=%.2f)",
+                        _before, len(original_memories), _rerank_threshold, _vector_fallback,
+                    )
+                # Sort: rerank_score desc, then score desc
+                original_memories.sort(
+                    key=lambda m: (m.get("rerank_score", 0), m.get("score", 0)),
+                    reverse=True,
                 )
+
+            if graph_append:
+                for m in graph_append:
+                    m["source"] = "graph"
+                original_memories = list(original_memories) + graph_append
+                logger.info("Graph relations appended: %d (as graph source)", len(graph_append))
 
         if temporal_usage_notice:
             display_temporal_usage_notice(self, "sync", "search", *temporal_usage_notice)
@@ -2260,7 +2318,7 @@ class Memory(MemoryBase):
                     if val:
                         graph_filters[key] = val
                 if graph_filters:
-                    self._executor.submit(self.graph.delete_all, graph_filters)
+                    self._graph_write_executor.submit(self.graph.delete_all, graph_filters)
             except Exception as e:
                 logger.warning(f"Graph cleanup failed for memory {memory_id}: {e}")
 
@@ -2539,9 +2597,12 @@ class Memory(MemoryBase):
         if hasattr(self, "db") and self.db is not None:
             self.db.close()
             self.db = None
-        if hasattr(self, "_executor") and self._executor is not None:
-            self._executor.shutdown(wait=False)
-            self._executor = None
+        if hasattr(self, "_graph_write_executor") and self._graph_write_executor is not None:
+            self._graph_write_executor.shutdown(wait=False)
+            self._graph_write_executor = None
+        if hasattr(self, "_graph_search_executor") and self._graph_search_executor is not None:
+            self._graph_search_executor.shutdown(wait=False)
+            self._graph_search_executor = None
 
     def chat(self, query):
         raise NotImplementedError("Chat function not implemented yet.")
@@ -2566,8 +2627,11 @@ class AsyncMemory(MemoryBase):
         self._search_depth_cache = OrderedDict()
         self.custom_instructions = self.config.custom_instructions
         self._entity_store = None
-        self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=int(os.environ.get("MEM0_GRAPH_MAX_WORKERS", "1"))
+        self._graph_write_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=int(os.environ.get("MEM0_GRAPH_MAX_WORKERS", "5"))
+        )
+        self._graph_search_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=int(os.environ.get("MEM0_GRAPH_SEARCH_WORKERS", "2"))
         )
 
         # Initialize reranker if configured
@@ -3140,6 +3204,27 @@ class AsyncMemory(MemoryBase):
                     mem["metadata"] = {"lane": lane}
                 else:
                     meta["lane"] = lane
+
+        # Phase 2.6: Importance keyword fallback (when LLM didn't output importance)
+        _importance_low_kw = ["测试", "验证", "查询", "建议", "待办", "需配置", "应该", "需要", "可以", "方案", "如何", "处理顺序", "步骤"]
+        _importance_high_kw = ["发哥", "偏好", "喜欢", "决定", "部署", "配置", "姓名", "住在"]
+        for mem in extracted_memories:
+            if not isinstance(mem, dict):
+                continue
+            meta = mem.get("metadata")
+            if meta and "importance" in meta:
+                continue
+            text = mem.get("text") or ""
+            if any(kw in text for kw in _importance_low_kw):
+                importance = 2
+            elif any(kw in text for kw in _importance_high_kw):
+                importance = 5
+            else:
+                importance = 3
+            if meta is None:
+                mem["metadata"] = {"importance": importance}
+            else:
+                meta["importance"] = importance
 
         # Normalize: LLM may return bare strings in the "memory" field.
         # Wrap them as {"text": str_value} instead of dropping them.
@@ -3800,9 +3885,20 @@ class AsyncMemory(MemoryBase):
             pass  # vector-only, no graph or rerank
         elif depth == "full":
             # Merge graph search results if graph store is enabled
+            graph_append = []
             if self.graph:
                 try:
-                    graph_relations = await asyncio.to_thread(self.graph.search, query, effective_filters, limit)
+                    loop = asyncio.get_running_loop()
+                    graph_relations = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            self._graph_search_executor,
+                            self.graph.search,
+                            query,
+                            effective_filters,
+                            limit,
+                        ),
+                        timeout=15,
+                    )
                     if graph_relations:
                         _graph_memories = []
                         for r in graph_relations[:5]:
@@ -3811,17 +3907,29 @@ class AsyncMemory(MemoryBase):
                             dst = r.get("destination", "")
                             if not src or not rel or not dst:
                                 continue
-                            _mem = f"{src} - {rel} -> {dst}"
+                            _relation_cn = (r.get("relation_cn", "") or "").strip()
+                            if _relation_cn:
+                                _mem = f"{src} {_relation_cn} {dst}"
+                            else:
+                                _mem = f"{src} - {rel} -> {dst}"
                             if len(_mem) < 10:
                                 continue
                             _graph_memories.append(
                                 {"id": str(uuid.uuid4()), "memory": _mem, "event": "ADD"}
                             )
-                        original_memories = list(original_memories) + _graph_memories
+                        graph_append = _graph_memories
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Graph search timed out after 15s — "
+                        "read pool (MEM0_GRAPH_SEARCH_WORKERS=%s) may be saturated; "
+                        "using vector store results only",
+                        os.environ.get("MEM0_GRAPH_SEARCH_WORKERS", "2"),
+                    )
                 except Exception as e:
-                    logger.warning(f"Graph search failed, using vector store results only: {e}")
+                    logger.warning(f"Graph search failed: {e}, using vector store results only")
 
-            # Apply reranking if enabled and reranker is available (async)  ← 此处注释有 async
+            # Apply reranking if enabled and reranker is available (async)
+            _rerank_applied = False
             if rerank and self.reranker and original_memories:
                 try:
                     # Run reranking in thread pool to avoid blocking async loop
@@ -3829,18 +3937,39 @@ class AsyncMemory(MemoryBase):
                         self.reranker.rerank, query, original_memories, limit
                     )
                     original_memories = reranked_memories
+                    _rerank_applied = True
                 except Exception as e:
                     logger.warning(f"Reranking failed, using original results: {e}")
 
-            # Filter by rerank_score threshold
-            _rerank_threshold = getattr(self.config, "rerank_score_threshold", 0.0) or 0.0
-            if _rerank_threshold > 0 and original_memories:
-                _before = len(original_memories)
-                original_memories = [m for m in original_memories if m.get("rerank_score", 0) >= _rerank_threshold]
-                logger.info(
-                    "Rerank threshold filter: %d → %d (threshold=%.2f)",
-                    _before, len(original_memories), _rerank_threshold,
+            # Filter by rerank_score threshold only when rerank actually ran
+            if _rerank_applied:
+                _rerank_threshold = float(os.environ.get("MEM0_RERANK_SCORE_THRESHOLD", "0.4"))
+                _vector_fallback = float(os.environ.get("MEM0_VECTOR_SCORE_FALLBACK", "0.5"))
+                if _rerank_threshold > 0 and original_memories:
+                    _before = len(original_memories)
+                    filtered = []
+                    for m in original_memories:
+                        rs = m.get("rerank_score", 0)
+                        if rs >= _rerank_threshold:
+                            filtered.append(m)
+                        elif _vector_fallback > 0 and m.get("score", 0) >= _vector_fallback:
+                            filtered.append(m)
+                    original_memories = filtered
+                    logger.info(
+                        "Rerank threshold filter: %d → %d (rerank=%.2f, vector_fallback=%.2f)",
+                        _before, len(original_memories), _rerank_threshold, _vector_fallback,
+                    )
+                # Sort: rerank_score desc, then score desc
+                original_memories.sort(
+                    key=lambda m: (m.get("rerank_score", 0), m.get("score", 0)),
+                    reverse=True,
                 )
+
+            if graph_append:
+                for m in graph_append:
+                    m["source"] = "graph"
+                original_memories = list(original_memories) + graph_append
+                logger.info("Graph relations appended: %d (as graph source)", len(graph_append))
 
         if temporal_usage_notice:
             await display_temporal_usage_notice_async(self, "async", "search", *temporal_usage_notice)
@@ -4571,9 +4700,12 @@ class AsyncMemory(MemoryBase):
         if hasattr(self, "db") and self.db is not None:
             self.db.close()
             self.db = None
-        if hasattr(self, "_executor") and self._executor is not None:
-            self._executor.shutdown(wait=False)
-            self._executor = None
+        if hasattr(self, "_graph_write_executor") and self._graph_write_executor is not None:
+            self._graph_write_executor.shutdown(wait=False)
+            self._graph_write_executor = None
+        if hasattr(self, "_graph_search_executor") and self._graph_search_executor is not None:
+            self._graph_search_executor.shutdown(wait=False)
+            self._graph_search_executor = None
 
     async def chat(self, query):
         raise NotImplementedError("Chat function not implemented yet.")

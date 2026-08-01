@@ -262,7 +262,9 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `MEM0_GRAPH_MAX_WORKERS` | `1` | 图写入线程池最大工作线程数 |
+| `MEM0_GRAPH_MAX_WORKERS` | `5` | 图写入线程池最大工作线程数（图实体提取并发数，1 = 串行） |
+| `MEM0_GRAPH_SEARCH_WORKERS` | `2` | 图搜索线程池最大工作线程数（与写池分离，批量写入时写任务不阻塞搜索） |
+| `MEM0_GRAPH_THRESHOLD` | `0.7` | 图搜索相似度阈值（0-1，env 优先级最高，config.json `graph_store.threshold` 次之） |
 
 ### 重排序
 
@@ -457,6 +459,38 @@ LLM 提取记忆时自动判断 `importance` 和 `lane`，一条 `MEM0_ENABLE_DE
 | 快衰减 | ~20天 | `lane=fast` / 关键词含"开心/心情/今天" |
 
 存量记忆无 lane 字段 → normal 行为，零变化。
+
+### importance 关键词兜底
+
+LLM 未输出 `importance` 时按关键词自动判断（Phase 2.6，sync/async 双路径）：
+
+| 分值 | 判断 | 关键词示例 |
+|------|------|-----------|
+| 5 | 高价值信号命中 | 发哥 / 偏好 / 部署 / 配置 / 姓名 / 住在 |
+| 2 | 低价值信号命中（优先判断） | 测试 / 验证 / 查询 / 建议 / 待办 / 需配置 / 处理顺序 |
+| 3 | 兜底 | 其余 |
+
+低价值优先判断——含「需配置 X」的方案建议类文本判 2 而非 5，防止污染记忆永不衰减。
+
+## Rerank 联合过滤（方案 D）
+
+`depth=full` 时 rerank 完成后按双阈值过滤（`mem0/memory/main.py`）：
+
+| 通道 | 保留条件 | 环境变量 |
+|------|---------|---------|
+| rerank | `rerank_score >= 0.4` | `MEM0_RERANK_SCORE_THRESHOLD`（默认 0.4） |
+| 向量兜底 | `vector score >= 0.5`（图碎片无向量分，不适用） | `MEM0_VECTOR_SCORE_FALLBACK`（默认 0.5，0=关闭） |
+
+过滤仅在 rerank 实际执行后生效（`_rerank_applied` 守卫）——`rerank=False` 时不再误杀全部结果。
+
+## 图碎片方案 B（图关联补充召回）
+
+图搜索返回的实体关系碎片（如「发哥 部署于 10.200.1.163」）**不参与 rerank 竞争**（rerank 对短碎片文本打分系统性偏低，实测 0.03-0.3），而是在 rerank + 阈值过滤**之后**直接附加到结果末尾，标注 `source=graph`：
+
+- 排序保持图搜索返回顺序（向量/CONTAINS 召回通道已确认相关，不做额外排序）
+- 即使向量结果全被阈值滤掉，图碎片仍兜底返回
+- 拼句优先用中文关系名（`relation_cn` 属性，如「部署于」），无则回退英文格式（`- deployed_on ->`）
+- 中文关系名属性由写入端保留（FalkorDB 关系类型仅支持 ASCII，909705c 已映射英文类型 + 存中文原名到 `relation_cn`）
 
 ## 用户纠正感知
 
