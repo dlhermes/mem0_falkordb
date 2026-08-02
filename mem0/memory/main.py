@@ -2375,18 +2375,7 @@ class Memory(MemoryBase):
 
         self._delete_memory(memory_id, existing_memory)
 
-        # Clean up graph data
-        if self.graph:
-            try:
-                graph_filters = {}
-                for key in ("user_id", "agent_id", "run_id"):
-                    val = existing_memory.payload.get(key)
-                    if val:
-                        graph_filters[key] = val
-                if graph_filters:
-                    self._graph_write_executor.submit(self.graph.delete_all, graph_filters)
-            except Exception as e:
-                logger.warning(f"Graph cleanup failed for memory {memory_id}: {e}")
+        logger.info("single memory delete: graph cleanup skipped (shared knowledge graph)")
 
         decay_usage_notice = detect_decay_usage_from_delete()
         if decay_usage_notice:
@@ -4477,18 +4466,7 @@ class AsyncMemory(MemoryBase):
 
         await self._delete_memory(memory_id, existing_memory)
 
-        # Clean up graph data
-        if self.graph:
-            try:
-                graph_filters = {}
-                for key in ("user_id", "agent_id", "run_id"):
-                    val = existing_memory.payload.get(key)
-                    if val:
-                        graph_filters[key] = val
-                if graph_filters:
-                    await asyncio.to_thread(self.graph.delete_all, graph_filters)
-            except Exception as e:
-                logger.warning(f"Graph cleanup failed for memory {memory_id}: {e}")
+        logger.info("single memory delete: graph cleanup skipped (shared knowledge graph)")
 
         decay_usage_notice = detect_decay_usage_from_delete()
         if decay_usage_notice:
