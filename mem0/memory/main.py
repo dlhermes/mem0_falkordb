@@ -1821,8 +1821,11 @@ class Memory(MemoryBase):
         if depth == "standard":
             pass  # vector-only, no graph or rerank
         elif depth == "full":
-            # Merge graph search results if graph store is enabled
-            graph_append = []
+            # Merge graph search results if graph store is enabled.
+            # Graph fragments join the candidate pool BEFORE rerank (upstream
+            # behavior) so the reranker scores them against the query — with
+            # pure-Chinese relation types the fragment text matches the query
+            # semantically and should survive the rerank threshold.
             if self.graph:
                 try:
                     graph_future = self._graph_search_executor.submit(self.graph.search, query, effective_filters, limit)
@@ -1845,9 +1848,15 @@ class Memory(MemoryBase):
                             if len(_mem) < 5:
                                 continue
                             _graph_memories.append(
-                                {"id": str(uuid.uuid4()), "memory": _mem, "event": "ADD"}
+                                {
+                                    "id": str(uuid.uuid4()),
+                                    "memory": _mem,
+                                    "event": "ADD",
+                                    "source": "graph",
+                                    "recall_channel": r.get("recall_channel", "vector"),
+                                }
                             )
-                        graph_append = _graph_memories
+                        original_memories = list(original_memories) + _graph_memories
                 except concurrent.futures.TimeoutError:
                     logger.warning(
                         "Graph search timed out after 15s — "
@@ -1869,7 +1878,11 @@ class Memory(MemoryBase):
                 except Exception as e:
                     logger.warning(f"Reranking failed, using original results: {e}")
 
-            # Filter by rerank_score threshold only when rerank actually ran
+            # Filter by rerank_score threshold only when rerank actually ran.
+            # Graph fragments recalled via STARTS WITH (recall_channel=contains)
+            # are exact/substring matches confirmed by the graph layer — they
+            # are exempt from the threshold (reranker may not recognize synonym
+            # relations like 喜欢↔偏好) but still ranked by rerank_score.
             if _rerank_applied:
                 _rerank_threshold = float(os.environ.get("MEM0_RERANK_SCORE_THRESHOLD", "0.4"))
                 _vector_fallback = float(os.environ.get("MEM0_VECTOR_SCORE_FALLBACK", "0.5"))
@@ -1882,22 +1895,24 @@ class Memory(MemoryBase):
                             filtered.append(m)
                         elif _vector_fallback > 0 and m.get("score", 0) >= _vector_fallback:
                             filtered.append(m)
+                        elif m.get("source") == "graph" and m.get("recall_channel") == "contains":
+                            filtered.append(m)
                     original_memories = filtered
                     logger.info(
                         "Rerank threshold filter: %d → %d (rerank=%.2f, vector_fallback=%.2f)",
                         _before, len(original_memories), _rerank_threshold, _vector_fallback,
                     )
-                # Sort: rerank_score desc, then score desc
+                # Sort: rerank_score desc, then score desc. Graph fragments
+                # carry rerank_score after rerank so they interleave naturally;
+                # ties broken by keeping contains-channel fragments ahead.
                 original_memories.sort(
-                    key=lambda m: (m.get("rerank_score", 0), m.get("score", 0)),
+                    key=lambda m: (
+                        m.get("rerank_score", 0),
+                        m.get("score", 0) if m.get("score") is not None else -1,
+                        1 if m.get("source") == "graph" and m.get("recall_channel") == "contains" else 0,
+                    ),
                     reverse=True,
                 )
-
-            if graph_append:
-                for m in graph_append:
-                    m["source"] = "graph"
-                original_memories = list(original_memories) + graph_append
-                logger.info("Graph relations appended: %d (as graph source)", len(graph_append))
 
         if temporal_usage_notice:
             display_temporal_usage_notice(self, "sync", "search", *temporal_usage_notice)
@@ -3886,8 +3901,11 @@ class AsyncMemory(MemoryBase):
         if depth == "standard":
             pass  # vector-only, no graph or rerank
         elif depth == "full":
-            # Merge graph search results if graph store is enabled
-            graph_append = []
+            # Merge graph search results if graph store is enabled.
+            # Graph fragments join the candidate pool BEFORE rerank (upstream
+            # behavior) so the reranker scores them against the query — with
+            # pure-Chinese relation types the fragment text matches the query
+            # semantically and should survive the rerank threshold.
             if self.graph:
                 try:
                     loop = asyncio.get_running_loop()
@@ -3919,9 +3937,15 @@ class AsyncMemory(MemoryBase):
                             if len(_mem) < 5:
                                 continue
                             _graph_memories.append(
-                                {"id": str(uuid.uuid4()), "memory": _mem, "event": "ADD"}
+                                {
+                                    "id": str(uuid.uuid4()),
+                                    "memory": _mem,
+                                    "event": "ADD",
+                                    "source": "graph",
+                                    "recall_channel": r.get("recall_channel", "vector"),
+                                }
                             )
-                        graph_append = _graph_memories
+                        original_memories = list(original_memories) + _graph_memories
                 except asyncio.TimeoutError:
                     logger.warning(
                         "Graph search timed out after 15s — "
@@ -3945,7 +3969,11 @@ class AsyncMemory(MemoryBase):
                 except Exception as e:
                     logger.warning(f"Reranking failed, using original results: {e}")
 
-            # Filter by rerank_score threshold only when rerank actually ran
+            # Filter by rerank_score threshold only when rerank actually ran.
+            # Graph fragments recalled via STARTS WITH (recall_channel=contains)
+            # are exact/substring matches confirmed by the graph layer — they
+            # are exempt from the threshold (reranker may not recognize synonym
+            # relations like 喜欢↔偏好) but still ranked by rerank_score.
             if _rerank_applied:
                 _rerank_threshold = float(os.environ.get("MEM0_RERANK_SCORE_THRESHOLD", "0.4"))
                 _vector_fallback = float(os.environ.get("MEM0_VECTOR_SCORE_FALLBACK", "0.5"))
@@ -3958,22 +3986,24 @@ class AsyncMemory(MemoryBase):
                             filtered.append(m)
                         elif _vector_fallback > 0 and m.get("score", 0) >= _vector_fallback:
                             filtered.append(m)
+                        elif m.get("source") == "graph" and m.get("recall_channel") == "contains":
+                            filtered.append(m)
                     original_memories = filtered
                     logger.info(
                         "Rerank threshold filter: %d → %d (rerank=%.2f, vector_fallback=%.2f)",
                         _before, len(original_memories), _rerank_threshold, _vector_fallback,
                     )
-                # Sort: rerank_score desc, then score desc
+                # Sort: rerank_score desc, then score desc. Graph fragments
+                # carry rerank_score after rerank so they interleave naturally;
+                # ties broken by keeping contains-channel fragments ahead.
                 original_memories.sort(
-                    key=lambda m: (m.get("rerank_score", 0), m.get("score", 0)),
+                    key=lambda m: (
+                        m.get("rerank_score", 0),
+                        m.get("score", 0) if m.get("score") is not None else -1,
+                        1 if m.get("source") == "graph" and m.get("recall_channel") == "contains" else 0,
+                    ),
                     reverse=True,
                 )
-
-            if graph_append:
-                for m in graph_append:
-                    m["source"] = "graph"
-                original_memories = list(original_memories) + graph_append
-                logger.info("Graph relations appended: %d (as graph source)", len(graph_append))
 
         if temporal_usage_notice:
             await display_temporal_usage_notice_async(self, "async", "search", *temporal_usage_notice)
