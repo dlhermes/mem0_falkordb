@@ -775,8 +775,7 @@ class MemoryGraph:
             source = item["source"]
             destination = item["destination"]
             relationship = item["relationship"]
-            # Sanitize relationship name to ASCII-safe Cypher (FalkorDB rejects CJK chars)
-            _safe_relationship = sanitize_relationship_for_cypher(relationship)
+            _safe_relationship = relationship  # already sanitized by _remove_spaces_from_entities
 
             source_props_str, params = self._build_node_props(
                 filters, include_name=True, name_param="source_name"
@@ -837,8 +836,7 @@ class MemoryGraph:
             source = item["source"]
             destination = item["destination"]
             relationship = item["relationship"]
-            # Sanitize relationship name to ASCII-safe Cypher (FalkorDB rejects CJK chars)
-            _safe_relationship = sanitize_relationship_for_cypher(relationship)
+            _safe_relationship = relationship  # already sanitized by _remove_spaces_from_entities
 
             source_type = entity_type_map.get(source, "__User__")
             # Sanitize entity_type to ASCII-safe Cypher label (FalkorDB rejects CJK labels)
