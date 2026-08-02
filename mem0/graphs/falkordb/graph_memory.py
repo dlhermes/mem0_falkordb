@@ -385,18 +385,31 @@ class MemoryGraph:
                 _expanded_tokens.add(token)
 
         if _expanded_tokens:
-            _or_clauses = []
+            _type_clauses = []
+            _cn_clauses = []
             _or_params = {}
             for _i, _token in enumerate(_expanded_tokens):
-                _pname = f"_cnt{_i}"
-                _or_clauses.append(f"r.relation_cn CONTAINS ${_pname}")
-                _or_params[_pname] = _token
+                _tpname = f"_ct{_i}"
+                _cpname = f"_cnt{_i}"
+                _type_clauses.append(f"type(r) = ${_tpname}")
+                _cn_clauses.append(f"r.relation_cn CONTAINS ${_cpname}")
+                _or_params[_tpname] = _token
+                _or_params[_cpname] = _token
+
+            _where_clause = ""
+            if _type_clauses and _cn_clauses:
+                _type_str = " OR ".join(_type_clauses)
+                _cn_str = " OR ".join(_cn_clauses)
+                _where_clause = f"WHERE ({_type_str}) OR ({_cn_str})"
+            elif _cn_clauses:
+                _cn_str = " OR ".join(_cn_clauses)
+                _where_clause = f"WHERE {_cn_str}"
 
             try:
                 _cn_results = self.graph.query(
                     f"""
                     MATCH (a:`{_cn_label}`)-[r]->(b:`{_cn_label}`)
-                    WHERE {" OR ".join(_or_clauses)}
+                    {_where_clause}
                     RETURN a.name AS source, id(a) AS source_id, type(r) AS relationship,
                            id(r) AS relation_id, b.name AS destination, id(b) AS destination_id,
                            r.relation_cn AS relation_cn
