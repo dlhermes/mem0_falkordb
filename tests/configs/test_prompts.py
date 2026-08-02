@@ -26,7 +26,7 @@ def test_get_update_memory_messages_empty_memory():
         ["new fact"], 
         None
     )
-    assert "Current memory is empty" in result
+    assert "当前记忆为空" in result
 
     # Test with empty list for retrieved_old_memory_dict
     result = prompts.get_update_memory_messages(
@@ -34,7 +34,7 @@ def test_get_update_memory_messages_empty_memory():
         ["new fact"], 
         None
     )
-    assert "Current memory is empty" in result
+    assert "当前记忆为空" in result
 
 
 def test_get_update_memory_messages_non_empty_memory():
@@ -48,4 +48,4 @@ def test_get_update_memory_messages_non_empty_memory():
     # Check that the memory data is displayed
     assert str(memory_data) in result
     # And that the non-empty memory message is present
-    assert "current content of my memory" in result
+    assert "以下是目前我已收集的记忆内容" in result

@@ -128,5 +128,5 @@ m = Memory.from_config(config)
 ## 注意事项
 
 - FalkorDB 使用 Cypher 查询语言（与 Neo4j 兼容）
-- 实体标签名仅支持 ASCII 字符——中文 entity_type / relationship 会被自动 sanitize
+- 中文 entity_type / relationship 经 backtick 转义后直接写入（FalkorDB v42001+ 原生支持 CJK 标识符，无需映射英文）；非法字符（`;`/括号等注入面）替换为下划线
 - 每用户独立图，互不干扰

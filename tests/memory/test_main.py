@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -1089,3 +1090,138 @@ class TestAddPipelineEntityEmbeddingCountGuard:
         assert any("padding/truncating" in r.message for r in caplog.records), (
             "expected count-mismatch warning was not emitted"
         )
+
+
+class TestSemanticMergeUpdate:
+    """Semantic merge on UPDATE events: old details preserved, new facts merged.
+
+    UPDATE = merge not replace. Old memory text is retrieved by real_id and
+    re-merged with the extracted fact via a dedicated LLM call; any failure
+    (exception / empty output / no old text) falls back to the extracted
+    text unchanged.
+    """
+
+    def _memory_with_existing(self, mocker, existing_payload, memory_cls=Memory):
+        _setup_mocks(mocker)
+        embedder_mock = mocker.patch("mem0.utils.factory.EmbedderFactory.create")
+        embedder_mock.return_value.embed.return_value = [0.1, 0.2, 0.3]
+        embedder_mock.return_value.embed_batch.return_value = [[0.1, 0.2, 0.3]]
+        mocker.patch("mem0.memory.main.capture_event")
+        memory = memory_cls()
+        memory.config = mocker.MagicMock()
+        memory.config.custom_instructions = None
+        memory.config.custom_update_memory_prompt = None
+        memory.custom_instructions = None
+        memory.api_version = "v1.1"
+        memory.db.get_last_messages = MagicMock(return_value=[])
+        memory.db.save_messages = MagicMock()
+        memory.vector_store.search.return_value = [
+            SimpleNamespace(id="uuid-1", payload=dict(existing_payload))
+        ]
+        return memory
+
+    def _update_extraction(self, text="后端使用 pgvector"):
+        return json.dumps(
+            {"memory": [{"id": "0", "text": text, "event": "UPDATE", "metadata": {}}]}
+        )
+
+    def _stored_payload(self, memory):
+        insert_kwargs = memory.vector_store.insert.call_args.kwargs
+        if "payloads" in insert_kwargs:
+            return insert_kwargs["payloads"][0]
+        return memory.vector_store.insert.call_args.args[2][0]
+
+    def test_sync_update_preserves_old_details_and_merges_new(self, mocker):
+        memory = self._memory_with_existing(
+            mocker, {"data": "服务部署在 10.200.1.163，API 端口 8888，前端端口 3002"}
+        )
+        merged = "服务部署在 10.200.1.163，API 端口 8888，前端端口 3002，后端使用 pgvector"
+        memory.llm.generate_response.side_effect = [self._update_extraction(), merged]
+
+        result = memory._add_to_vector_store(
+            messages=[{"role": "user", "content": "test"}], metadata={}, filters={}, infer=True
+        )
+
+        assert memory.vector_store.delete.call_args_list[0].kwargs["vector_id"] == "uuid-1"
+        payload = self._stored_payload(memory)
+        assert payload["data"] == merged
+        assert memory.vector_store.insert.call_args.kwargs["ids"][0] == "uuid-1"
+        merge_messages = memory.llm.generate_response.call_args_list[1].kwargs["messages"]
+        assert "10.200.1.163" in merge_messages[1]["content"]
+        assert "后端使用 pgvector" in merge_messages[1]["content"]
+        assert result == []
+
+    def test_sync_update_contradiction_new_value_wins(self, mocker):
+        memory = self._memory_with_existing(mocker, {"data": "服务部署在 10.200.1.163，API 端口 8888"})
+        merged = "服务部署在 10.200.1.163，API 端口 9999"
+        memory.llm.generate_response.side_effect = [self._update_extraction(), merged]
+
+        memory._add_to_vector_store(
+            messages=[{"role": "user", "content": "test"}], metadata={}, filters={}, infer=True
+        )
+
+        payload = self._stored_payload(memory)
+        assert payload["data"] == merged
+
+    def test_sync_update_merge_exception_falls_back(self, mocker, caplog):
+        memory = self._memory_with_existing(mocker, {"data": "服务部署在 10.200.1.163，API 端口 8888"})
+        new_text = "后端使用 pgvector"
+        memory.llm.generate_response.side_effect = [self._update_extraction(new_text), TimeoutError("timeout")]
+
+        with caplog.at_level(logging.WARNING):
+            memory._add_to_vector_store(
+                messages=[{"role": "user", "content": "test"}], metadata={}, filters={}, infer=True
+            )
+
+        payload = self._stored_payload(memory)
+        assert payload["data"] == new_text
+        assert any("Semantic merge failed" in r.message for r in caplog.records)
+
+    def test_sync_update_missing_old_text_skips_merge(self, mocker):
+        memory = self._memory_with_existing(mocker, {})
+        new_text = "后端使用 pgvector"
+        memory.llm.generate_response.side_effect = [self._update_extraction(new_text)]
+
+        memory._add_to_vector_store(
+            messages=[{"role": "user", "content": "test"}], metadata={}, filters={}, infer=True
+        )
+
+        payload = self._stored_payload(memory)
+        assert payload["data"] == new_text
+        assert memory.llm.generate_response.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_async_update_preserves_old_details_and_merges_new(self, mocker):
+        memory = self._memory_with_existing(
+            mocker, {"data": "服务部署在 10.200.1.163，API 端口 8888，前端端口 3002"}, AsyncMemory
+        )
+        merged = "服务部署在 10.200.1.163，API 端口 8888，前端端口 3002，后端使用 pgvector"
+        memory.llm.generate_response.side_effect = [self._update_extraction(), merged]
+
+        result = await memory._add_to_vector_store(
+            messages=[{"role": "user", "content": "test"}], metadata={}, effective_filters={}, infer=True
+        )
+
+        assert memory.vector_store.delete.call_args_list[0].kwargs["vector_id"] == "uuid-1"
+        payload = self._stored_payload(memory)
+        assert payload["data"] == merged
+        assert memory.vector_store.insert.call_args.kwargs["ids"][0] == "uuid-1"
+        merge_messages = memory.llm.generate_response.call_args_list[1].kwargs["messages"]
+        assert "10.200.1.163" in merge_messages[1]["content"]
+        assert "后端使用 pgvector" in merge_messages[1]["content"]
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_async_update_merge_exception_falls_back(self, mocker, caplog):
+        memory = self._memory_with_existing(mocker, {"data": "服务部署在 10.200.1.163，API 端口 8888"}, AsyncMemory)
+        new_text = "后端使用 pgvector"
+        memory.llm.generate_response.side_effect = [self._update_extraction(new_text), TimeoutError("timeout")]
+
+        with caplog.at_level(logging.WARNING):
+            await memory._add_to_vector_store(
+                messages=[{"role": "user", "content": "test"}], metadata={}, effective_filters={}, infer=True
+            )
+
+        payload = self._stored_payload(memory)
+        assert payload["data"] == new_text
+        assert any("Semantic merge failed" in r.message for r in caplog.records)
