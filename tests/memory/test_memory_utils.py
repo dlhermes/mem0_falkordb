@@ -5,6 +5,7 @@ from mem0.memory.utils import (
     parse_messages,
     parse_vision_messages,
     remove_spaces_from_entities,
+    sanitize_label_for_cypher,
     sanitize_relationship_for_cypher,
 )
 
@@ -199,3 +200,18 @@ class TestRemoveSpacesFromEntities:
 
     def test_chinese_mixed_with_safe_ascii(self):
         assert sanitize_relationship_for_cypher("修复_bug") == "`修复_bug`"
+
+    # --- Node label tests (sanitize_label_for_cypher) ---
+
+    def test_label_underscores_preserved(self):
+        assert sanitize_label_for_cypher("__User__") == "__User__"
+
+    def test_label_ascii_whitelist_passes_through(self):
+        for label in ("person", "organization", "location", "tool", "concept", "event", "metric", "product", "user", "other"):
+            assert sanitize_label_for_cypher(label) == label
+
+    def test_label_chinese_backtick_quoted(self):
+        assert sanitize_label_for_cypher("工具") == "`工具`"
+
+    def test_label_empty_falls_back_to_user(self):
+        assert sanitize_label_for_cypher("") == "__User__"
