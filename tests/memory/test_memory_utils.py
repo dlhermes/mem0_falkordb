@@ -168,3 +168,34 @@ class TestRemoveSpacesFromEntities:
         f = remove_spaces_from_entities([dict(base)], sanitize_relationship=False)[0]["relationship"]
         assert t == sanitize_relationship_for_cypher("a/b")
         assert f == "a/b"
+
+    # --- Chinese relation type tests (backtick escaping) ---
+
+    def test_chinese_relation_backtick_wrapped(self):
+        assert sanitize_relationship_for_cypher("部署") == "`部署`"
+
+    def test_chinese_relation_multi_char(self):
+        assert sanitize_relationship_for_cypher("部署于") == "`部署于`"
+
+    def test_pure_ascii_passes_through(self):
+        assert sanitize_relationship_for_cypher("deploys") == "deploys"
+        assert sanitize_relationship_for_cypher("works_at") == "works_at"
+
+    def test_empty_falls_back_to_related_to(self):
+        assert sanitize_relationship_for_cypher("") == "related_to"
+        assert sanitize_relationship_for_cypher("!!!") == "related_to"
+
+    def test_backtick_idempotent(self):
+        assert sanitize_relationship_for_cypher("`部署`") == "`部署`"
+
+    def test_injection_chars_blocked(self):
+        result = sanitize_relationship_for_cypher("部署; MATCH (n) DETACH DELETE n")
+        assert ";" not in result
+        assert "(" not in result
+        assert ")" not in result
+
+    def test_whitespace_replaced(self):
+        assert sanitize_relationship_for_cypher("a b") == "a_b"
+
+    def test_chinese_mixed_with_safe_ascii(self):
+        assert sanitize_relationship_for_cypher("修复_bug") == "`修复_bug`"

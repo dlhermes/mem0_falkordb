@@ -275,7 +275,7 @@ def sanitize_relationship_for_cypher(relationship) -> str:
         if inner and "`" not in inner:
             return relationship
 
-    _UNSAFE_RE = re.compile(r'[`{}\[\]<>()|&=+*^%$#@!?"\'\\\\/\s]')
+    _UNSAFE_RE = re.compile(r'[`{}\[\]<>()|&=+*^%$#@!?;:"\'\\\\/\s]')
     sanitized = _UNSAFE_RE.sub("_", relationship)
     sanitized = re.sub(r"_+", "_", sanitized).strip("_")
 
