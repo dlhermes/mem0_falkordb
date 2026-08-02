@@ -371,7 +371,10 @@ class MemoryGraph:
         )
         _vector_hits = len(search_output)
 
-        # Supplemental recall: match query tokens against relation_cn (Chinese relation names)
+        # Supplemental recall: match query tokens against relationship type
+        # (pure-Chinese types stored via backtick escaping; CONTAINS so that
+        # verb stems like "部署" match "部署于"). Legacy relation_cn property
+        # channel removed — new deployment does not need backward compat.
         _seen_relation_ids = set(r.get("relation_id") for r in search_output)
         _cn_label = "__Entity__" if self.use_base_label else "Node"
         _cn_uid = self._user_id(filters)
@@ -386,24 +389,13 @@ class MemoryGraph:
 
         if _expanded_tokens:
             _type_clauses = []
-            _cn_clauses = []
             _or_params = {}
             for _i, _token in enumerate(_expanded_tokens):
                 _tpname = f"_ct{_i}"
-                _cpname = f"_cnt{_i}"
-                _type_clauses.append(f"type(r) = ${_tpname}")
-                _cn_clauses.append(f"r.relation_cn CONTAINS ${_cpname}")
+                _type_clauses.append(f"type(r) CONTAINS ${_tpname}")
                 _or_params[_tpname] = _token
-                _or_params[_cpname] = _token
 
-            _where_clause = ""
-            if _type_clauses and _cn_clauses:
-                _type_str = " OR ".join(_type_clauses)
-                _cn_str = " OR ".join(_cn_clauses)
-                _where_clause = f"WHERE ({_type_str}) OR ({_cn_str})"
-            elif _cn_clauses:
-                _cn_str = " OR ".join(_cn_clauses)
-                _where_clause = f"WHERE {_cn_str}"
+            _where_clause = f"WHERE {' OR '.join(_type_clauses)}"
 
             try:
                 _cn_results = self.graph.query(
@@ -443,6 +435,18 @@ class MemoryGraph:
         tokenized_query = _tokenize_cjk(query)
         scores = bm25.get_scores(tokenized_query)
         top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:5]
+
+        # CONTAINS channel hits (type-name exact/substring match) are semantically
+        # stronger than vector-only hits. BM25 on tiny corpora yields flat/zero
+        # scores (single-char tokenization vs word-level query), so we order
+        # CONTAINS hits first, then vector hits by BM25 score.
+        _cn_index_set = set()
+        if _cn_hits > 0:
+            # search_output layout: [vector hits..., cn hits...]
+            _cn_start = _vector_hits
+            for _i in range(_cn_start, len(search_output)):
+                _cn_index_set.add(_i)
+        top_indices = sorted(top_indices, key=lambda i: (i not in _cn_index_set, -scores[i]))
 
         search_results = []
         for idx in top_indices:
