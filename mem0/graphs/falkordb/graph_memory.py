@@ -369,12 +369,16 @@ class MemoryGraph:
         search_output = self._search_graph_db(
             node_list=node_list, filters=filters
         )
+        # Mark vector-channel hits; supplemental STARTS WITH hits get "contains".
+        for _item in search_output:
+            _item.setdefault("recall_channel", "vector")
         _vector_hits = len(search_output)
 
         # Supplemental recall: match query tokens against relationship type
-        # (pure-Chinese types stored via backtick escaping; CONTAINS so that
-        # verb stems like "部署" match "部署于"). Legacy relation_cn property
-        # channel removed — new deployment does not need backward compat.
+        # (pure-Chinese types stored via backtick escaping; STARTS WITH so that
+        # verb stems like "部署" match "部署于" while negative forms like
+        # "不喜好" (prefix 不/未/没) stay excluded). Legacy relation_cn
+        # property channel removed — new deployment does not need backward compat.
         _seen_relation_ids = set(r.get("relation_id") for r in search_output)
         _cn_label = "__Entity__" if self.use_base_label else "Node"
         _cn_uid = self._user_id(filters)
@@ -392,7 +396,7 @@ class MemoryGraph:
             _or_params = {}
             for _i, _token in enumerate(_expanded_tokens):
                 _tpname = f"_ct{_i}"
-                _type_clauses.append(f"type(r) CONTAINS ${_tpname}")
+                _type_clauses.append(f"type(r) STARTS WITH ${_tpname}")
                 _or_params[_tpname] = _token
 
             _where_clause = f"WHERE {' OR '.join(_type_clauses)}"
@@ -414,10 +418,11 @@ class MemoryGraph:
                     rid = item.get("relation_id")
                     if rid not in _seen_relation_ids:
                         _seen_relation_ids.add(rid)
+                        item["recall_channel"] = "contains"
                         search_output.append(item)
             except Exception:
                 logger.debug(
-                    "relation_cn CONTAINS query failed for tokens %s", _expanded_tokens, exc_info=True,
+                    "relation type STARTS WITH query failed for tokens %s", _expanded_tokens, exc_info=True,
                 )
 
         _cn_hits = len(search_output) - _vector_hits
@@ -464,7 +469,13 @@ class MemoryGraph:
             if len(src) < 2 or len(dst) < 2:
                 continue
             search_results.append(
-                {"source": src, "relationship": rel, "destination": dst, "relation_cn": item.get("relation_cn", "")}
+                {
+                    "source": src,
+                    "relationship": rel,
+                    "destination": dst,
+                    "relation_cn": item.get("relation_cn", ""),
+                    "recall_channel": item.get("recall_channel", "vector"),
+                }
             )
 
         logger.info(
