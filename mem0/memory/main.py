@@ -1840,7 +1840,9 @@ class Memory(MemoryBase):
                                 _mem = f"{src} {_relation_cn} {dst}"
                             else:
                                 _mem = f"{src} - {rel} -> {dst}"
-                            if len(_mem) < 10:
+                            # Pure-Chinese relations can be short (e.g. "发哥 偏好 喝茶" = 9 chars);
+                            # keep threshold low to avoid dropping valid short relations.
+                            if len(_mem) < 5:
                                 continue
                             _graph_memories.append(
                                 {"id": str(uuid.uuid4()), "memory": _mem, "event": "ADD"}
@@ -3912,7 +3914,9 @@ class AsyncMemory(MemoryBase):
                                 _mem = f"{src} {_relation_cn} {dst}"
                             else:
                                 _mem = f"{src} - {rel} -> {dst}"
-                            if len(_mem) < 10:
+                            # Pure-Chinese relations can be short (e.g. "发哥 偏好 喝茶" = 9 chars);
+                            # keep threshold low to avoid dropping valid short relations.
+                            if len(_mem) < 5:
                                 continue
                             _graph_memories.append(
                                 {"id": str(uuid.uuid4()), "memory": _mem, "event": "ADD"}
