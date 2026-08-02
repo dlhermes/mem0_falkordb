@@ -288,6 +288,25 @@ def sanitize_relationship_for_cypher(relationship) -> str:
     return f"`{sanitized}`"
 
 
+def sanitize_label_for_cypher(label) -> str:
+    """Sanitize a node label for Cypher.
+
+    Node labels come from the extract_entities tool schema whitelist
+    (person/organization/location/tool/concept/event/metric/product/user/other)
+    or the ``__User__`` fallback — all ASCII identifiers. Unlike relationship
+    types, labels must keep leading/trailing underscores intact (e.g.
+    ``__User__``), so no underscore stripping is applied here.
+
+    Non-ASCII labels (defensive; not expected from the whitelist) are
+    backtick-quoted so they remain valid Cypher identifiers.
+    """
+    if not label:
+        return "__User__"
+    if re.match(r'^[a-zA-Z0-9_]+$', label):
+        return label
+    return f"`{label}`"
+
+
 def remove_spaces_from_entities(
     entity_list: List[Any],
     *,

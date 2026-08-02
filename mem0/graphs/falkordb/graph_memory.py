@@ -7,7 +7,11 @@ import re
 import time as _time
 from collections import OrderedDict
 
-from mem0.memory.utils import format_entities, sanitize_relationship_for_cypher
+from mem0.memory.utils import (
+    format_entities,
+    sanitize_label_for_cypher,
+    sanitize_relationship_for_cypher,
+)
 
 try:
     from falkordb import FalkorDB
@@ -867,12 +871,14 @@ class MemoryGraph:
             _safe_relationship = relationship  # already sanitized by _remove_spaces_from_entities
 
             source_type = entity_type_map.get(source, "__User__")
-            # Sanitize entity_type to ASCII-safe Cypher label (FalkorDB rejects CJK labels)
-            _safe_source_type = sanitize_relationship_for_cypher(source_type) if re else source_type
+            # Node labels come from the extract_entities whitelist (ASCII);
+            # sanitize_label keeps underscores intact (__User__) and
+            # backtick-quotes only non-ASCII (defensive).
+            _safe_source_type = sanitize_label_for_cypher(source_type)
             source_label = self.node_label if self.node_label else f":`{_safe_source_type}`"
             source_extra_set = f", source:`{_safe_source_type}`" if self.node_label else ""
             destination_type = entity_type_map.get(destination, "__User__")
-            _safe_dest_type = sanitize_relationship_for_cypher(destination_type) if re else destination_type
+            _safe_dest_type = sanitize_label_for_cypher(destination_type)
             destination_label = (
                 self.node_label if self.node_label else f":`{_safe_dest_type}`"
             )
