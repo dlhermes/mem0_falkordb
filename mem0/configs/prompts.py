@@ -211,12 +211,22 @@ DEFAULT_UPDATE_MEMORY_PROMPT = """你是一个智能记忆管理器，控制系�
                 {
                     "id" : "0",
                     "text" : "用户是一名软件工程师",
-                    "event" : "NONE"
+                    "event" : "NONE",
+                    "metadata" : {
+                        "temporal" : "PRESENT",
+                        "importance" : 4,
+                        "lane" : "normal"
+                    }
                 },
                 {
                     "id" : "1",
                     "text" : "名字是张三",
-                    "event" : "ADD"
+                    "event" : "ADD",
+                    "metadata" : {
+                        "temporal" : "TIMELESS",
+                        "importance" : 5,
+                        "lane" : "slow"
+                    }
                 }
             ]
 
@@ -227,6 +237,8 @@ DEFAULT_UPDATE_MEMORY_PROMPT = """你是一个智能记忆管理器，控制系�
 示例（a）—— 如果记忆中包含"用户喜欢打板球"，而检索到的事实是"喜欢和朋友一起打板球"，则用检索到的事实更新记忆。
 示例（b）—— 如果记忆中包含"喜欢奶酪披萨"，而检索到的事实是"爱吃奶酪披萨"，则无需更新，因为它们传达了相同的信息。
 如果指示是更新记忆，则你必须更新它。
+**更新 = 合并，不是替换。更新后的文本必须保留旧记忆中所有仍然有效的事实细节，包括但不限于：端口号、IP 地址、数字、日期、地点、名称、版本号等具体信息。新事实补充或修正旧记忆时，只能增加或修改冲突的部分，不得丢弃旧记忆中未被新事实推翻的细节。**
+示例（c）—— 旧记忆"服务部署在 10.200.1.163，API 端口 8888，前端端口 3002"，检索到的事实"后端使用 pgvector"，更新结果必须为"服务部署在 10.200.1.163，API 端口 8888，前端端口 3002，后端使用 pgvector"——端口和 IP 必须保留，不能只写"后端使用 pgvector"。
 请注意，更新时必须保留相同的 ID。
 请注意，输出中的 ID 必须来自输入的 ID，不要生成任何新 ID。
 - **示例**：
@@ -253,18 +265,33 @@ DEFAULT_UPDATE_MEMORY_PROMPT = """你是一个智能记忆管理器，控制系�
                     "id" : "0",
                     "text" : "喜欢奶酪和鸡肉披萨",
                     "event" : "UPDATE",
-                    "old_memory" : "我非常喜欢奶酪披萨"
+                    "old_memory" : "我非常喜欢奶酪披萨",
+                    "metadata" : {
+                        "temporal" : "PRESENT",
+                        "importance" : 3,
+                        "lane" : "normal"
+                    }
                 },
                 {
                     "id" : "1",
                     "text" : "用户是一名软件工程师",
-                    "event" : "NONE"
+                    "event" : "NONE",
+                    "metadata" : {
+                        "temporal" : "PRESENT",
+                        "importance" : 4,
+                        "lane" : "normal"
+                    }
                 },
                 {
                     "id" : "2",
                     "text" : "喜欢和朋友一起打板球",
                     "event" : "UPDATE",
-                    "old_memory" : "用户喜欢打板球"
+                    "old_memory" : "用户喜欢打板球",
+                    "metadata" : {
+                        "temporal" : "PRESENT",
+                        "importance" : 3,
+                        "lane" : "normal"
+                    }
                 }
             ]
         }
@@ -291,17 +318,32 @@ DEFAULT_UPDATE_MEMORY_PROMPT = """你是一个智能记忆管理器，控制系�
                 {
                     "id" : "0",
                     "text" : "名字是张三",
-                    "event" : "NONE"
+                    "event" : "NONE",
+                    "metadata" : {
+                        "temporal" : "TIMELESS",
+                        "importance" : 5,
+                        "lane" : "slow"
+                    }
                 },
                 {
                     "id" : "1",
                     "text" : "喜欢奶酪披萨",
-                    "event" : "DELETE"
+                    "event" : "DELETE",
+                    "metadata" : {
+                        "temporal" : "PRESENT",
+                        "importance" : 3,
+                        "lane" : "normal"
+                    }
                 },
                 {
                     "id" : "2",
                     "text" : "不喜欢奶酪披萨",
-                    "event" : "ADD"
+                    "event" : "ADD",
+                    "metadata" : {
+                        "temporal" : "PRESENT",
+                        "importance" : 3,
+                        "lane" : "normal"
+                    }
                 }
         ]
         }
@@ -326,15 +368,32 @@ DEFAULT_UPDATE_MEMORY_PROMPT = """你是一个智能记忆管理器，控制系�
                 {
                     "id" : "0",
                     "text" : "名字是张三",
-                    "event" : "NONE"
+                    "event" : "NONE",
+                    "metadata" : {
+                        "temporal" : "TIMELESS",
+                        "importance" : 5,
+                        "lane" : "slow"
+                    }
                 },
                 {
                     "id" : "1",
                     "text" : "喜欢奶酪披萨",
-                    "event" : "NONE"
+                    "event" : "NONE",
+                    "metadata" : {
+                        "temporal" : "PRESENT",
+                        "importance" : 3,
+                        "lane" : "normal"
+                    }
                 }
             ]
         }
+
+每条记忆条目必须包含 metadata 元数据字段：
+
+- **metadata.temporal**（字符串，必填）：事实的时间属性。PAST（过去发生的）、PRESENT（当前状态/持续中）、FUTURE（计划/未来事件）或 TIMELESS（无时效的通用知识）。基于当前日期和消息内容判断。
+- **metadata.temporal_date**（字符串，可选）：事实发生的日期，ISO 格式 yyyy-MM-dd。仅在有明确日期时输出。
+- **metadata.importance**（整数 1-5，必填）：5=必须永远记住的关键事实（身份/偏好/决策），1-4=普通事实。
+- **metadata.lane**（字符串，必填）："slow"=经验流程规则（需长期保留）/"normal"=一般知识/"fast"=情绪临时内容（快速腐化）
 """
 
 PROCEDURAL_MEMORY_SYSTEM_PROMPT = """
@@ -579,6 +638,21 @@ ADDITIVE_EXTRACTION_PROMPT = """
 
 """
 
+
+SEMANTIC_MERGE_PROMPT = """你是一个记忆合并器。你的任务是把「旧记忆」与「新事实」合并成一条完整的记忆文本。
+
+核心规则：合并，不是替换。
+
+必须遵守：
+1. 保留旧记忆中所有仍然有效的具体细节，包括但不限于：端口号、IP 地址、数字、日期、地点、名称、版本号、价格等。
+2. 新事实补充的信息必须与旧细节共存，一并写入结果。
+3. 当新事实与旧记忆矛盾时（如端口迁移、IP 变更、数值更新），以新事实为准，但其余未冲突的旧细节必须保留。
+4. 合并结果应为一条连贯、自包含的完整记忆文本，不遗漏任何仍有效的信息。
+5. 不要添加旧记忆和新事实之外的新信息。
+
+输出要求：
+- 只输出合并后的记忆文本本身，不要任何解释、前缀、JSON 包裹或代码块标记。
+"""
 
 AGENT_CONTEXT_SUFFIX = """
 

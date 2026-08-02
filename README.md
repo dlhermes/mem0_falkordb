@@ -376,9 +376,9 @@ MEM0_CORRECTION_TOP_K=30            # 放宽后返回数量上限
 
 上游无此功能。本 Fork 修改了 LLM 提取 prompt，每条记忆自动标注时间属性：
 
-- LLM 输出 `metadata.temporal` — PAST / PRESENT / FUTURE / TIMELESS
-- LLM 输出 `metadata.temporal_date` — 有明确日期时同时输出 ISO 日期
-- 搜索时可通过 `filters: {"metadata.temporal": "FUTURE"}` 过滤
+- LLM 输出 `temporal`（metadata 键）— PAST / PRESENT / FUTURE / TIMELESS
+- LLM 输出 `temporal_date`（metadata 键）— 有明确日期时同时输出 ISO 日期
+- 搜索时可通过 `filters: {"temporal": "FUTURE"}` 过滤（temporal 为 payload 顶层键）
 - 代码改动：`prompts.py`（LLM 输出格式）、`main.py`（metadata 合并）
 - 零额外 LLM 调用——在已有提取请求中附带
 

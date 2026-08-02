@@ -420,7 +420,7 @@ LLM 在提取记忆时自动标注时间属性，写入 metadata 的 `temporal` 
 # 搜索时按 temporal 筛选（通过 metadata filter，值需大写）
 curl -s -X POST http://localhost:8080/search \
   -H 'Content-Type: application/json' \
-  -d '{"user_id": "alice", "query": "...", "metadata_filters": {"temporal": "FUTURE"}}'
+  -d '{"query": "...", "filters": {"user_id": "alice", "temporal": "FUTURE"}}'
 ```
 
 ## 搜索深度路由

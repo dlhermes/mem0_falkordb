@@ -22,6 +22,7 @@ from mem0.configs.prompts import (
     AGENT_CONTEXT_SUFFIX,
     DEFAULT_UPDATE_MEMORY_PROMPT,
     PROCEDURAL_MEMORY_SYSTEM_PROMPT,
+    SEMANTIC_MERGE_PROMPT,
     generate_additive_extraction_prompt,
 )
 from mem0.exceptions import LLMError
@@ -401,6 +402,36 @@ def _build_session_scope(filters):
         if val:
             parts.append(f"{key}={val}")
     return "&".join(parts)
+
+
+def _semantic_merge_text(llm, old_text, new_text):
+    """Merge old memory text with newly extracted facts via a dedicated LLM call.
+
+    UPDATE = merge, not replace: the old text is fed back together with the
+    new facts so still-valid details (ports, IPs, numbers, dates, names) are
+    preserved. Falls back to ``new_text`` unchanged on any failure (no old
+    text, exception, empty/non-string output) so the pipeline never degrades.
+    """
+    if not old_text or not str(old_text).strip():
+        return new_text
+    try:
+        response = llm.generate_response(
+            messages=[
+                {"role": "system", "content": SEMANTIC_MERGE_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"【旧记忆】\n{old_text}\n\n【新事实】\n{new_text}\n\n请输出合并后的完整记忆文本：",
+                },
+            ]
+        )
+    except Exception as e:
+        logger.warning("Semantic merge failed, using extracted text as-is: %s", e)
+        return new_text
+    merged = response.strip() if isinstance(response, str) else ""
+    if not merged:
+        logger.warning("Semantic merge returned empty output, using extracted text as-is")
+        return new_text
+    return merged
 
 
 def _entity_collection_name(provider: str, collection_name: str) -> str:
@@ -911,7 +942,7 @@ class Memory(MemoryBase):
         # Non-blocking graph write — fire and forget
         if self.graph:
             graph_filters = effective_filters.copy()
-            self._graph_write_executor.submit(self._add_to_graph, messages, graph_filters)
+            self._graph_write_executor.submit(self._add_to_graph, vector_store_result, graph_filters)
 
         scale_threshold_notice = detect_scale_threshold_from_add_result(self, vector_store_result)
         if temporal_usage_notice:
@@ -988,8 +1019,10 @@ class Memory(MemoryBase):
         # Map UUIDs to integers (anti-hallucination)
         existing_memories = []
         uuid_mapping = {}
+        old_text_by_id = {}
         for idx, mem in enumerate(existing_results):
             uuid_mapping[str(idx)] = mem.id
+            old_text_by_id[str(mem.id)] = mem.payload.get("data", "")
             existing_memories.append({"id": str(idx), "text": mem.payload.get("data", "")})
 
         # Phase 2: LLM extraction (single call or chunked)
@@ -1226,17 +1259,28 @@ class Memory(MemoryBase):
                         except Exception as e:
                             logger.warning(f"Failed to log DELETE history for {real_id}: {e}")
                     elif event == "UPDATE":
-                        # Schedule re-insert with updated text
+                        # Semantic merge: preserve still-valid old details, merge new facts
+                        old_text = old_text_by_id.get(str(real_id), "")
+                        merged_text = _semantic_merge_text(self.llm, old_text, text)
+                        if merged_text in embed_map:
+                            merged_embedding = embed_map[merged_text]
+                        else:
+                            try:
+                                merged_embedding = self.embedding_model.embed(merged_text, "add")
+                            except Exception as e:
+                                logger.warning(f"Failed to embed merged update text, using extracted embedding: {e}")
+                                merged_embedding = embed_map[text]
+                        # Schedule re-insert with merged text
                         mem_metadata_update = deepcopy(metadata)
-                        mem_metadata_update["data"] = text
-                        mem_metadata_update["hash"] = hashlib.md5(text.encode()).hexdigest()
+                        mem_metadata_update["data"] = merged_text
+                        mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
                         mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
                         mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
                         llm_meta = mem.get("metadata") or {}
                         for k in ("temporal", "temporal_date", "importance", "lane"):
                             if k in llm_meta:
                                 mem_metadata_update[k] = llm_meta[k]
-                        update_records.append((str(real_id), text, embed_map[text], mem_metadata_update))
+                        update_records.append((str(real_id), merged_text, merged_embedding, mem_metadata_update))
                 continue  # DELETE done; UPDATE handled via delete + re-insert below
 
             # ADD (default) — current logic
@@ -1467,14 +1511,19 @@ class Memory(MemoryBase):
         )
         return returned_memories
 
-    def _add_to_graph(self, messages, filters):
+    def _add_to_graph(self, vector_store_result, filters):
         added_entities = []
         if self.graph:
             try:
                 if filters.get("user_id") is None:
                     filters["user_id"] = "user"
 
-                data = "\n".join([msg["content"] for msg in messages if "content" in msg and msg["role"] != "system"])
+                data = "\n".join(
+                    [m["memory"] for m in vector_store_result if isinstance(m, dict) and m.get("memory")]
+                )
+                if not data:
+                    logger.info("graph write skipped: no extracted memories")
+                    return []
                 added_entities = self.graph.add(data, filters)
                 logger.info(
                     "graph write success: added=%d, deleted=%d",
@@ -2996,7 +3045,7 @@ class AsyncMemory(MemoryBase):
         # Non-blocking graph write — fire and forget
         if self.graph:
             graph_filters = effective_filters.copy()
-            asyncio.create_task(self._add_to_graph(messages, graph_filters))
+            asyncio.create_task(self._add_to_graph(vector_store_result, graph_filters))
 
         scale_threshold_notice = await asyncio.to_thread(detect_scale_threshold_from_add_result, self, vector_store_result)
         if temporal_usage_notice:
@@ -3072,8 +3121,10 @@ class AsyncMemory(MemoryBase):
         # Map UUIDs to integers (anti-hallucination)
         existing_memories = []
         uuid_mapping = {}
+        old_text_by_id = {}
         for idx, mem in enumerate(existing_results):
             uuid_mapping[str(idx)] = mem.id
+            old_text_by_id[str(mem.id)] = mem.payload.get("data", "")
             existing_memories.append({"id": str(idx), "text": mem.payload.get("data", "")})
 
         # Phase 2: LLM extraction (single call or chunked)
@@ -3304,16 +3355,29 @@ class AsyncMemory(MemoryBase):
                         except Exception as e:
                             logger.warning(f"Failed to log DELETE history for {real_id}: {e}")
                     elif event == "UPDATE":
+                        # Semantic merge: preserve still-valid old details, merge new facts
+                        old_text = old_text_by_id.get(str(real_id), "")
+                        merged_text = await asyncio.to_thread(_semantic_merge_text, self.llm, old_text, text)
+                        if merged_text in embed_map:
+                            merged_embedding = embed_map[merged_text]
+                        else:
+                            try:
+                                merged_embedding = await asyncio.to_thread(
+                                    self.embedding_model.embed, merged_text, "add"
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to embed merged update text, using extracted embedding: {e}")
+                                merged_embedding = embed_map[text]
                         mem_metadata_update = deepcopy(metadata)
-                        mem_metadata_update["data"] = text
-                        mem_metadata_update["hash"] = hashlib.md5(text.encode()).hexdigest()
+                        mem_metadata_update["data"] = merged_text
+                        mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
                         mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
                         mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
                         llm_meta = mem.get("metadata") or {}
                         for k in ("temporal", "temporal_date", "importance", "lane"):
                             if k in llm_meta:
                                 mem_metadata_update[k] = llm_meta[k]
-                        update_records.append((str(real_id), text, embed_map[text], mem_metadata_update))
+                        update_records.append((str(real_id), merged_text, merged_embedding, mem_metadata_update))
                 continue
 
             # ADD (default)
@@ -3543,14 +3607,19 @@ class AsyncMemory(MemoryBase):
         )
         return returned_memories
 
-    async def _add_to_graph(self, messages, filters):
+    async def _add_to_graph(self, vector_store_result, filters):
         added_entities = []
         if self.graph:
             try:
                 if filters.get("user_id") is None:
                     filters["user_id"] = "user"
 
-                data = "\n".join([msg["content"] for msg in messages if "content" in msg and msg["role"] != "system"])
+                data = "\n".join(
+                    [m["memory"] for m in vector_store_result if isinstance(m, dict) and m.get("memory")]
+                )
+                if not data:
+                    logger.info("graph write skipped: no extracted memories")
+                    return []
                 added_entities = await asyncio.to_thread(self.graph.add, data, filters)
                 logger.info(
                     "graph write success: added=%d, deleted=%d",
