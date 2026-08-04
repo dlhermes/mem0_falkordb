@@ -52,6 +52,11 @@ logger = logging.getLogger(__name__)
 
 _MAX_GRAPH_CACHE = 256
 
+# Graph search query/token 上限（防止超长 query 分词出大量 token，
+# 串行执行 embed + FalkorDB 查询导致 15s 超时降级为 vector-only）
+_MAX_GRAPH_QUERY_CHARS = 4000  # 与 rerank 截断策略一致
+_MAX_GRAPH_SEARCH_TOKENS = 25  # 图搜索补充召回上限；中文长对话去重后约 25-50 token，25 覆盖多数关键实体且耗时几乎不变（FalkorDB 查询 0.7ms/次）
+
 _CHINESE_STOP_WORDS = frozenset({
     "的", "了", "是", "在", "和", "也", "都", "就", "有", "不",
     "与", "对", "从", "到", "而", "及", "以", "但", "或", "所",
@@ -364,9 +369,25 @@ class MemoryGraph:
     def search(self, query, filters, limit=100):
         """Search for memories and related graph data."""
         _t0 = _time.perf_counter()
+
+        # B: 超长 query 截断（与 rerank 截断策略一致），避免分词出大量 token
+        if len(query) > _MAX_GRAPH_QUERY_CHARS:
+            logger.info(
+                "graph search query truncated: %d -> %d chars",
+                len(query), _MAX_GRAPH_QUERY_CHARS,
+            )
+            query = query[:_MAX_GRAPH_QUERY_CHARS]
+
         logger.info("graph search start: query=%.80s, user_id=%s", query, filters.get("user_id", "?"))
 
         node_list = _tokenize_query_for_search(query)
+        # A: 限制参与图搜索的 token 数量，避免 50+ token 串行 embed/FalkorDB 查询超时
+        if len(node_list) > _MAX_GRAPH_SEARCH_TOKENS:
+            logger.info(
+                "graph search tokens capped: %d -> %d",
+                len(node_list), _MAX_GRAPH_SEARCH_TOKENS,
+            )
+            node_list = node_list[:_MAX_GRAPH_SEARCH_TOKENS]
         if not node_list:
             logger.info("graph search done: 0 results (no tokens), elapsed=%.2fs", _time.perf_counter() - _t0)
             return []
