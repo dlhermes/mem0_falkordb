@@ -267,7 +267,8 @@ curl -s http://<llm-host>/v1/chat/completions \
 | `MEM0_LLM_MAX_RETRIES` | SDK 默认 | OpenAI 客户端最大重试次数 |
 | `MEM0_LLM_TEMPERATURE` | `0.2` | LLM 生成温度 |
 | `MEM0_LLM_MAX_TOKENS` | `2000` | LLM 最大生成 token 数 |
-| `MEM0_LLM_MAX_INPUT_TOKENS` | `0`（不限制） | 单次记忆提取最大输入 token 数，超出自动分块提取并上下文传递 |
+| `MEM0_LLM_MAX_INPUT_TOKENS` | `0`（不限制） | 兼容旧配置。已由 `MEM0_LLM_CONTEXT_WINDOW` 取代（未设置 CONTEXT_WINDOW 时回退使用） |
+| `MEM0_LLM_CONTEXT_WINDOW` | `0`（不限制） | LLM 上下文窗口总大小（n_ctx）。分块按此计算并预留输出余量，避免 chunk 逼近窗口上限被截断（旧表现为 `JSON parse failed on chunk 0` + llama.cpp 日志 `truncated=1`）。8K 显存 llama.cpp（n_ctx=16384）建议设 16384。**依赖 tiktoken**（requirements.txt 已含）：容器无 tiktoken 时估算 fallback `len//4`，对中文严重低估（约 45%），分块会偏大 |
 
 ### Embedder 客户端
 

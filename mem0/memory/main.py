@@ -141,6 +141,11 @@ _SENSITIVE_SUFFIXES = (
 
 DEFAULT_MAX_INPUT_TOKENS = int(os.environ.get("MEM0_LLM_MAX_INPUT_TOKENS", "0"))
 
+# LLM 上下文窗口总大小（n_ctx）。分块按此计算并预留输出余量，避免 chunk 逼近
+# 窗口上限被截断（llama.cpp truncated=1）。未设置时回退到 MEM0_LLM_MAX_INPUT_TOKENS
+# 以保持向后兼容；两者均为 0 表示不限制、不启用分块。
+DEFAULT_CONTEXT_WINDOW = int(os.environ.get("MEM0_LLM_CONTEXT_WINDOW", "0")) or DEFAULT_MAX_INPUT_TOKENS
+
 # Entity parameters that must be passed via filters, not top-level kwargs
 ENTITY_PARAMS = frozenset({"user_id", "agent_id", "run_id"})
 
@@ -402,6 +407,97 @@ def _build_session_scope(filters):
         if val:
             parts.append(f"{key}={val}")
     return "&".join(parts)
+
+
+def _estimate_extraction_prompt_tokens(
+    system_prompt,
+    existing_memories,
+    recently_extracted_memories,
+    new_messages,
+    last_k_messages,
+    custom_instructions,
+):
+    """Estimate the actual token cost of the full extraction prompt sent to the LLM.
+
+    Covers every component that reaches the model: the system prompt, the
+    complete user-prompt template structure, existing memories, recently
+    extracted memories, last-k conversation history and custom instructions.
+    Both halves are counted with the real tiktoken encoder via `_estimate_tokens`.
+    """
+    user_prompt = generate_additive_extraction_prompt(
+        existing_memories=existing_memories,
+        recently_extracted_memories=recently_extracted_memories,
+        new_messages=new_messages,
+        last_k_messages=last_k_messages,
+        custom_instructions=custom_instructions,
+        use_input_language=False,
+    )
+    return _estimate_tokens(system_prompt) + _estimate_tokens(user_prompt)
+
+
+def _build_extraction_chunks(
+    messages,
+    system_prompt,
+    existing_memories,
+    last_k_messages,
+    custom_instructions,
+    context_window,
+    output_reserve,
+):
+    """Split messages into chunks sized so every chunk's full prompt stays clear of
+    the LLM context window, leaving room for the model output.
+
+    The per-chunk budget reserves:
+      - `output_reserve`: tokens the model may still generate (max_tokens + slack)
+      - the fixed prompt overhead (system prompt + template + existing memories +
+        last-k history + custom instructions), estimated from the real template
+      - a conserv/estimate for the "recently extracted memories" that grow as
+        earlier chunks are processed (up to 20 items, capped at 1/8 of the window)
+
+    Returns a list of message chunks, or the original messages when they already
+    fit in a single call.
+    """
+    base_overhead = _estimate_extraction_prompt_tokens(
+        system_prompt,
+        existing_memories,
+        None,
+        "",
+        last_k_messages,
+        custom_instructions,
+    )
+    single_total = _estimate_extraction_prompt_tokens(
+        system_prompt,
+        existing_memories,
+        None,
+        parse_messages(messages),
+        last_k_messages,
+        custom_instructions,
+    )
+    if single_total <= context_window - output_reserve:
+        return [messages]
+
+    # Reserve headroom for the growing "recently extracted memories" block
+    # (each chunk after the first re-sends up to 20 prior extractions).
+    recent_reserve = min(context_window // 8, 4096)
+    per_chunk_budget = context_window - output_reserve - base_overhead - recent_reserve
+    per_chunk_budget = max(per_chunk_budget, 512)
+
+    chunks = []
+    current = []
+    current_tokens = 0
+    for msg in messages:
+        msg_text = f"{msg.get('role', '')}: {msg.get('content', '')}"
+        msg_tokens = _estimate_tokens(msg_text)
+        if current and current_tokens + msg_tokens > per_chunk_budget:
+            chunks.append(current)
+            current = []
+            current_tokens = 0
+        current.append(msg)
+        current_tokens += msg_tokens
+    if current:
+        chunks.append(current)
+    return chunks if chunks else [messages]
+
 
 
 def _semantic_merge_text(llm, old_text, new_text):
@@ -1035,33 +1131,36 @@ class Memory(MemoryBase):
             system_prompt += AGENT_CONTEXT_SUFFIX
         custom_instr = prompt or self.custom_instructions
 
-        # Estimate total tokens (system_prompt + base sections are shared across chunks)
-        _base_overhead = _estimate_tokens(system_prompt) + 2000  # existing_memories + last_k + date
-        _total_est = _base_overhead + _estimate_tokens(parsed_messages)
-
-        if DEFAULT_MAX_INPUT_TOKENS > 0 and _total_est > DEFAULT_MAX_INPUT_TOKENS:
-            # === Chunked extraction ===
-            logger.info(
-                "add chunked extraction: total_est_tokens=%d, max_input_tokens=%d",
-                _total_est, DEFAULT_MAX_INPUT_TOKENS,
+        if DEFAULT_CONTEXT_WINDOW > 0:
+            # Reserve tokens for the model's output (max_tokens from llm config +
+            # slack) so each chunk's full prompt never approaches the n_ctx ceiling.
+            _llm_cfg = self.config.llm.config or {}
+            _max_output = int(_llm_cfg.get("max_tokens", 0) or 0)
+            _output_reserve = max(_max_output + 512, DEFAULT_CONTEXT_WINDOW // 8)
+            _chunks = _build_extraction_chunks(
+                messages,
+                system_prompt,
+                existing_memories,
+                last_messages,
+                custom_instr,
+                DEFAULT_CONTEXT_WINDOW,
+                _output_reserve,
             )
-            _per_chunk_limit = max(DEFAULT_MAX_INPUT_TOKENS - _base_overhead, 500)
-            # Split messages into chunks by item count, keeping each chunk under token limit
-            _chunks = []
-            _current = []
-            _current_tokens = 0
-            for _msg in messages:
-                _msg_text = f"{_msg.get('role', '')}: {_msg.get('content', '')}"
-                _msg_tokens = _estimate_tokens(_msg_text)
-                if _current and _current_tokens + _msg_tokens > _per_chunk_limit:
-                    _chunks.append(_current)
-                    _current = []
-                    _current_tokens = 0
-                _current.append(_msg)
-                _current_tokens += _msg_tokens
-            if _current:
-                _chunks.append(_current)
+            if len(_chunks) > 1:
+                # === Chunked extraction ===
+                _single_total = _estimate_extraction_prompt_tokens(
+                    system_prompt, existing_memories, None, parsed_messages, last_messages, custom_instr,
+                )
+                logger.info(
+                    "add chunked extraction: chunks=%d, single_prompt_tokens=%d, context_window=%d, output_reserve=%d",
+                    len(_chunks), _single_total, DEFAULT_CONTEXT_WINDOW, _output_reserve,
+                )
+            else:
+                _chunks = None
+        else:
+            _chunks = None
 
+        if _chunks:
             accumulated_memories = []
             for _ci, _chunk in enumerate(_chunks):
                 _chunk_text = parse_messages(_chunk)
@@ -3126,33 +3225,36 @@ class AsyncMemory(MemoryBase):
             system_prompt += AGENT_CONTEXT_SUFFIX
         custom_instr = prompt or self.custom_instructions
 
-        # Estimate total tokens (system_prompt + base sections are shared across chunks)
-        _base_overhead = _estimate_tokens(system_prompt) + 2000  # existing_memories + last_k + date
-        _total_est = _base_overhead + _estimate_tokens(parsed_messages)
-
-        if DEFAULT_MAX_INPUT_TOKENS > 0 and _total_est > DEFAULT_MAX_INPUT_TOKENS:
-            # === Chunked extraction ===
-            logger.info(
-                "add chunked extraction: total_est_tokens=%d, max_input_tokens=%d",
-                _total_est, DEFAULT_MAX_INPUT_TOKENS,
+        if DEFAULT_CONTEXT_WINDOW > 0:
+            # Reserve tokens for the model's output (max_tokens from llm config +
+            # slack) so each chunk's full prompt never approaches the n_ctx ceiling.
+            _llm_cfg = self.config.llm.config or {}
+            _max_output = int(_llm_cfg.get("max_tokens", 0) or 0)
+            _output_reserve = max(_max_output + 512, DEFAULT_CONTEXT_WINDOW // 8)
+            _chunks = _build_extraction_chunks(
+                messages,
+                system_prompt,
+                existing_memories,
+                last_messages,
+                custom_instr,
+                DEFAULT_CONTEXT_WINDOW,
+                _output_reserve,
             )
-            _per_chunk_limit = max(DEFAULT_MAX_INPUT_TOKENS - _base_overhead, 500)
-            # Split messages into chunks by item count, keeping each chunk under token limit
-            _chunks = []
-            _current = []
-            _current_tokens = 0
-            for _msg in messages:
-                _msg_text = f"{_msg.get('role', '')}: {_msg.get('content', '')}"
-                _msg_tokens = _estimate_tokens(_msg_text)
-                if _current and _current_tokens + _msg_tokens > _per_chunk_limit:
-                    _chunks.append(_current)
-                    _current = []
-                    _current_tokens = 0
-                _current.append(_msg)
-                _current_tokens += _msg_tokens
-            if _current:
-                _chunks.append(_current)
+            if len(_chunks) > 1:
+                # === Chunked extraction ===
+                _single_total = _estimate_extraction_prompt_tokens(
+                    system_prompt, existing_memories, None, parsed_messages, last_messages, custom_instr,
+                )
+                logger.info(
+                    "add chunked extraction: chunks=%d, single_prompt_tokens=%d, context_window=%d, output_reserve=%d",
+                    len(_chunks), _single_total, DEFAULT_CONTEXT_WINDOW, _output_reserve,
+                )
+            else:
+                _chunks = None
+        else:
+            _chunks = None
 
+        if _chunks:
             accumulated_memories = []
             for _ci, _chunk in enumerate(_chunks):
                 _chunk_text = parse_messages(_chunk)
