@@ -128,6 +128,36 @@ cp server/config.json.example server/config.json
 
 > ⚠️ LLM 配置的 `openai_base_url` 字段**不是** `api_base`，填错会导致容器启动崩溃。
 
+#### 可选配置：`reasoning_effort`（推理模型专用）
+
+> ⚠️ **绝大多数用户不需要配置此项。** 只有 LLM 是「推理模型」时才需要。
+
+**什么时候需要**：如果你的 LLM 服务把回复放进 `reasoning_content` 字段、`content` 恒为空——典型特征是 `POST /v1/chat/completions` 返回 200，但 mem0 日志一直 `add pipeline complete: results=0`，所有记忆提取结果为空。这是因为 mem0 只读取 `content` 字段，推理模型（如自部署 llama.cpp 上的 Qwen3.5 系列、DeepSeek-R1）默认把回答放在 `reasoning_content`，导致提取链路拿不到内容。
+
+**配置方法**：在 `config.json` 的 `llm.config` 中追加 `"reasoning_effort": "none"`：
+
+```json
+{
+  "llm": {
+    "provider": "openai",
+    "config": {
+      "model": "...",
+      "api_key": "sk-你的Key",
+      "openai_base_url": "...",
+      "reasoning_effort": "none"
+    }
+  }
+}
+```
+
+`"none"` 让模型跳过思考通道、直接输出 `content`，mem0 即可正常提取记忆。修改后 `docker compose restart mem0` 生效。
+
+**配套代码改动**（2026-08-04）：`mem0/llms/base.py` 的 `_get_common_params()` 增加 `reasoning_effort` 透传。上游代码只在「推理模型白名单」（o1/o3/gpt-5 系列）内透传该参数，白名单外的模型（如 Qwen3.5）即使配置了也会被静默丢弃，导致 `reasoning_effort` 不生效。此改动让任意模型都能透传，且不影响 temperature/max_tokens 等其他参数。
+
+**如何取消**：
+- **恢复默认行为（推荐）**：删除 `config.json` 中 `llm.config` 的 `"reasoning_effort"` 字段即可，无需改代码——代码改动本身无副作用，未配置时该参数不会被发送。
+- **完全还原代码**：删除 `_get_common_params()` 中「Add reasoning_effort if configured (also for non-reasoning models)」注释段的 4 行代码。
+
 **第二步：创建环境变量**
 
 复制 `server/.env.example` 并填入基础设施配置（模型配置不要放这里）：
