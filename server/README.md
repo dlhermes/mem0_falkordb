@@ -219,6 +219,26 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 
 > ⚠️ `.env` 中 `MEM0_EMBEDDING_DIMS` 的值必须与实际 Embedder 模型输出的向量维度一致（voyage-4-large = 1024，text-embedding-3-small = 1536）。不一致会导致写入时重建表。
 
+### 12. 推理模型导致记忆提取为空（results=0）
+
+**现象**：LLM 请求返回 200，但日志一直 `add pipeline complete: results=0`、`graph write skipped: no extracted memories`，任何对话都提取不出记忆。
+
+**根因**：LLM 是「推理模型」（如自部署 llama.cpp 上的 Qwen3.5 系列、DeepSeek-R1），默认把回答放在 `reasoning_content` 字段、`content` 恒为空。mem0 的提取链路只读取 `response.choices[0].message.content`（`mem0/llms/openai.py`），拿到的永远是空字符串。
+
+**验证方法**：直接请求 LLM 服务（带上 api_key）：
+```bash
+curl -s http://<llm-host>/v1/chat/completions \
+  -H "Content-Type: application/json" -H "Authorization: Bearer <key>" \
+  -d '{"model":"<model>","messages":[{"role":"user","content":"1+1"}],"max_tokens":200}'
+# 若返回 message.content 为空、message.reasoning_content 有内容 → 是推理模型
+```
+
+**修复**（2026-08-04 落地）：
+1. `config.json` 的 `llm.config` 追加 `"reasoning_effort": "none"`，让模型跳过思考通道直接输出 `content`；
+2. `mem0/llms/base.py` 的 `_get_common_params()` 增加 `reasoning_effort` 透传——上游只在推理模型白名单（o1/o3/gpt-5 系列）内透传，白名单外模型配置了也会被丢弃。
+
+> ⚠️ 此项仅推理模型需要，普通模型（OpenAI/GPT、Claude、DeepSeek 非 R1 版等）**无需配置**。取消方法：删除 `config.json` 中 `"reasoning_effort"` 字段即可恢复默认（代码改动无副作用）；如需还原代码，删除 `_get_common_params()` 中「Add reasoning_effort if configured」注释段。
+
 ## 性能调优
 
 通过环境变量调优数据库连接池、HTTP 客户端超时等参数。所有变量在 `docker-compose.yaml` 中 mem0 服务的 `environment` 段或 `.env` 文件中设置。

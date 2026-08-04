@@ -164,6 +164,11 @@ class LLMBase(ABC):
         else:
             params["max_tokens"] = self.config.max_tokens
 
+        # Add reasoning_effort if configured (also for non-reasoning models)
+        reasoning_effort = getattr(self.config, 'reasoning_effort', None)
+        if reasoning_effort:
+            params["reasoning_effort"] = reasoning_effort
+
         # Add provider-specific parameters from kwargs
         params.update(kwargs)
 
