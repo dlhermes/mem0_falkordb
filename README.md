@@ -509,6 +509,7 @@ Hermes 插件旧版 `sync_turn` 方法在失败重入时使用了 `extendleft(re
 |:-------|:---------|:-----------|
 | **rerank 参数传递** | 注释写"platform-only"，不传给 API | 显式传递 `rerank=True` + `depth="full"` |
 | **工具描述** | 标注"platform mode only"误导 | 修正为"self-hosted supports this" |
+| **写路径降本（潮浪并忆）** | 每条对话独立 `add` | 短对话合并缓冲，一次 `backend.add` 批量写入（见下方小节） |
 
 **安装方法**：
 
@@ -523,6 +524,27 @@ cp -r /path/to/mem0_falkordb/plugins/memory/mem0/* ~/.hermes/hermes-agent/plugin
 ```
 
 > **说明**：mem0 server 已内置自动启用 rerank 的逻辑（`config.json` 配置了 reranker 时自动 `rerank=True`），即使不替换插件，自部署版也能正常重排序。但替换插件可以确保参数显式传递，避免平台升级时的兼容性问题。
+
+### 潮浪并忆（Tidal Coalescing）写路径优化
+
+Hermes 插件的 `sync_turn` 对同一 `user_id + session_id` 的多条短对话做**合并缓冲**，攒够条件后一次 `backend.add` 批量写入，摊薄服务端 LLM 事实提取的调用次数（写路径降本 50-70%）。上游 mem0 插件无此能力——每条对话独立触发一次 `add`。
+
+| 环境变量 | 默认值 | 说明 |
+|:---------|:-------|:-----|
+| `MEM0_COALESCE_ENABLED` | `true` | 合并总开关；`false` 回到逐条直写旧语义 |
+| `MEM0_COALESCE_IDLE_SECS` | `5` | 桶空闲超过该秒数即冲刷（对话停顿时落库） |
+| `MEM0_COALESCE_WINDOW_SECS` | `15` | 桶生命周期上限，超时强制冲刷 |
+| `MEM0_COALESCE_MAX_TURNS` | `5` | 桶内对话数达到该值立即冲刷 |
+| `MEM0_COALESCE_MAX_CHARS` | `4000` | 桶内累计字符数达到该值立即冲刷 |
+| `MEM0_COALESCE_FASTPATH_CHARS` | `2000` | 单条消息超过该阈值直接落库（长消息不走合并） |
+
+**验证生效**（重启 Hermes 后日志应出现）：
+
+```text
+潮浪并忆：合并功能启用，空闲阈值=5.0s，窗口阈值=15.0s，最大对话数=5，最大字符数=4000，快速直写阈值=2000
+```
+
+冲刷时日志会打印「潮浪并忆：合并 N 条对话为 1 次写入（session=...，省 M 次调用）」；`MEM0_COALESCE_ENABLED=false` 时启动日志显示「合并功能关闭（逐条直写）」，每次对话打印「合并已关闭，消息逐条直写」。
 
 ### Reranker 上下文窗口配置（换用 32K 模型时调高）
 

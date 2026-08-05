@@ -98,6 +98,29 @@ def _vector_store_list_rows(listed):
     return []
 
 
+def _existing_hashes_from_store(vector_store, filters):
+    """Full-scan hash dedup fallback: all payload hashes in the store scoped to `filters`.
+
+    Complements the Phase 1 top_k semantic search, which can miss an exact-hash
+    duplicate when the query is a long multi-topic message. Best-effort — a
+    failure degrades to an empty set and dedup relies on top_k results alone.
+    """
+    try:
+        listed = vector_store.list(filters=filters, top_k=10000)
+    except Exception as e:
+        logger.debug(
+            f"Full-scan hash lookup failed, hash dedup relies on top_k search only: {e}"
+        )
+        return set()
+
+    hashes = set()
+    for row in _vector_store_list_rows(listed):
+        h = (getattr(row, "payload", None) or {}).get("hash")
+        if h:
+            hashes.add(h)
+    return hashes
+
+
 # Fields that hold runtime auth/connection objects and must be preserved.
 # These are non-serializable objects (e.g. AWSV4SignerAuth, RequestsHttpConnection)
 # needed by clients like OpenSearch — not sensitive strings to redact.
@@ -1329,11 +1352,12 @@ class Memory(MemoryBase):
 
         # Phase 4: Per-memory CPU processing + Phase 5: Hash dedup
         # Build set of existing hashes for dedup
-        existing_hashes = set()
+        existing_hashes = _existing_hashes_from_store(self.vector_store, search_filters)
         for mem in existing_results:
             h = mem.payload.get("hash") if hasattr(mem, "payload") and mem.payload else None
             if h:
                 existing_hashes.add(h)
+        logger.debug("add hash dedup: top_k=%d, full_scan_hashes=%d", len(existing_results), len(existing_hashes))
 
         records = []  # (memory_id, text, embedding, payload)
         delete_ids = []  # memory_ids to delete (UPDATE/DELETE events)
@@ -3416,11 +3440,15 @@ class AsyncMemory(MemoryBase):
                     logger.warning(f"Failed to embed memory text (async): {e}")
 
         # Phase 4: Per-memory CPU processing + Phase 5: Hash dedup
-        existing_hashes = set()
+        existing_hashes = await asyncio.to_thread(_existing_hashes_from_store, self.vector_store, search_filters)
         for mem in existing_results:
             h = mem.payload.get("hash") if hasattr(mem, "payload") and mem.payload else None
             if h:
                 existing_hashes.add(h)
+        logger.debug(
+            "add hash dedup (async): top_k=%d, full_scan_hashes=%d",
+            len(existing_results), len(existing_hashes),
+        )
 
         records = []
         delete_ids = []

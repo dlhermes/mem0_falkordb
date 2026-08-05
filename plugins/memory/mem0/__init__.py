@@ -42,6 +42,7 @@ from collections import deque
 from typing import Any, Dict, List
 
 from agent.memory_provider import MemoryProvider
+from agent.secret_scope import get_secret
 from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,17 @@ _PREFETCH_WAIT_SECS = 15
 # the oldest item is silently dropped to prevent unbounded memory growth
 # during extended mem0 server outages.
 _SYNC_QUEUE_MAXLEN = 50
+
+# 潮浪并忆（Tidal Coalescing）：把同一 user+session 的多条短对话合并成一次
+# backend.add 批量写入，摊薄服务端 LLM 事实提取的调用次数。全部参数可通过
+# MEM0_COALESCE_* 环境变量配置；MEM0_COALESCE_ENABLED=false 关闭合并，
+# 回到逐条写入的旧语义。
+_COALESCE_ENABLED = os.environ.get("MEM0_COALESCE_ENABLED", "true").lower() in ("1", "true", "yes")
+_COALESCE_IDLE_SECS = float(os.environ.get("MEM0_COALESCE_IDLE_SECS", "5"))
+_COALESCE_WINDOW_SECS = float(os.environ.get("MEM0_COALESCE_WINDOW_SECS", "15"))
+_COALESCE_MAX_TURNS = int(os.environ.get("MEM0_COALESCE_MAX_TURNS", "5"))
+_COALESCE_MAX_CHARS = int(os.environ.get("MEM0_COALESCE_MAX_CHARS", "4000"))
+_COALESCE_FASTPATH_CHARS = int(os.environ.get("MEM0_COALESCE_FASTPATH_CHARS", "2000"))
 
 _CLIENT_ERROR_TYPES = ("MemoryNotFoundError", "ValidationError")
 
@@ -90,7 +102,7 @@ def _load_config() -> dict:
 
     config = {
         "mode": os.environ.get("MEM0_MODE", "platform"),
-        "api_key": os.environ.get("MEM0_API_KEY", ""),
+        "api_key": get_secret("MEM0_API_KEY", ""),
         "host": os.environ.get("MEM0_HOST", ""),
         "agent_id": os.environ.get("MEM0_AGENT_ID", "hermes"),
         "oss": {},
@@ -222,6 +234,13 @@ class Mem0MemoryProvider(MemoryProvider):
         self._sync_queue = deque(maxlen=_SYNC_QUEUE_MAXLEN)
         self._sync_consumer_thread = None
         self._sync_consumer_started = False
+        # 潮浪并忆合并缓冲：key=(user_id, session_id)，value 为含 created/last/
+        # chars/messages 的桶。仅在后台消费者线程内读写，无需额外加锁。
+        self._coalesce_enabled = _COALESCE_ENABLED
+        self._coalesce_buckets = {}
+        # 合并统计（可观测性）：batches=已合并批次，direct=fastpath 直接落库数，
+        # saved_calls=省下的 backend.add 调用次数，bucket_turns=按 session 分布。
+        self._coalesce_stats = {"batches": 0, "direct": 0, "saved_calls": 0, "bucket_turns": {}}
         # Circuit breaker state
         self._consecutive_failures = 0
         self._breaker_open_until = 0.0
@@ -378,6 +397,14 @@ class Mem0MemoryProvider(MemoryProvider):
         if self._backend and not self._atexit_registered:
             atexit.register(self._shutdown_backend)
             self._atexit_registered = True
+        # 潮浪并忆启动配置日志：确认合并功能是否启用及各参数实际值
+        logger.info(
+            "潮浪并忆：合并功能%s，空闲阈值=%ss，窗口阈值=%ss，最大对话数=%d，"
+            "最大字符数=%d，快速直写阈值=%d",
+            "启用" if self._coalesce_enabled else "关闭（逐条直写）",
+            _COALESCE_IDLE_SECS, _COALESCE_WINDOW_SECS,
+            _COALESCE_MAX_TURNS, _COALESCE_MAX_CHARS, _COALESCE_FASTPATH_CHARS,
+        )
 
     def _read_filters(self) -> Dict[str, Any]:
         # Scoped to user_id only — by design — so recall surfaces memories
@@ -491,13 +518,14 @@ class Mem0MemoryProvider(MemoryProvider):
 
         Enqueues the turn into a bounded deque; a dedicated consumer thread
         pops items sequentially so that slow server responses don't cause
-        subsequent turns to be skipped.
+        subsequent turns to be skipped. session_id 随消息一并入队，供合并缓冲
+        按 user+session 维度分桶。
         """
         if self._backend is None or self._is_breaker_open():
             return
         if not self._sync_consumer_started:
             self._start_sync_consumer()
-        self._sync_queue.append((user_content, assistant_content))
+        self._sync_queue.append((session_id, user_content, assistant_content))
 
     def _start_sync_consumer(self) -> None:
         """Start the background consumer thread (idempotent)."""
@@ -512,41 +540,191 @@ class Mem0MemoryProvider(MemoryProvider):
         self._sync_consumer_thread.start()
 
     def _sync_consumer_loop(self) -> None:
-        """Process sync items from the queue sequentially.
+        """Process sync items: coalesce short turns into batch adds.
 
-        Each item gets its own HTTP timeout (configured on the backend
-        client), so a slow response for one turn does not cascade into
-        timeouts for later turns — they just wait their turn.
+        队列非空时排空入队项并冲刷已达上限的合并桶；队列为空时按空闲/窗口
+        超时唤醒冲刷。每批写入共用后端客户端各自的 HTTP 超时，慢响应不会
+        级联影响后续批次——它们只是排队等待。
         """
         while True:
-            try:
-                user_content, assistant_content = self._sync_queue.popleft()
-            except IndexError:
-                # Queue is empty; wait for new items.
-                self._sync_queue.append  # no-op — just a sentinel for the next iteration
+            drained = False
+            while True:
+                try:
+                    item = self._sync_queue.popleft()
+                except IndexError:
+                    break
+                drained = True
+                self._route_sync_item(item)
+            if drained:
+                self._flush_capped_buckets()
+                continue
+
+            # 队列已空：冲刷到期的桶，否则睡到最近期限（上限 0.5s 保证响应性）
+            now = time.monotonic()
+            if self._coalesce_buckets:
+                deadline = self._next_flush_deadline(now)
+                delay = deadline - now if deadline is not None else 0.5
+                if delay <= 0:
+                    self._flush_due_buckets(now)
+                    continue
+                time.sleep(min(delay, 0.5))
+            else:
                 time.sleep(0.5)
-                continue
 
-            backend = self._backend
-            if backend is None:
-                continue
+    def _route_sync_item(self, item) -> None:
+        """把一条入队项路由到 fastpath 直接落库或合并缓冲。"""
+        backend = self._backend
+        if backend is None:
+            return
+        session_id, user_content, assistant_content = item
+        msg_chars = len(user_content) + len(assistant_content)
+        if not self._coalesce_enabled:
+            # 合并功能关闭：沿用旧语义逐条写入
+            logger.debug(
+                "潮浪并忆：合并已关闭，消息逐条直写（session=%s，chars=%d）",
+                session_id or "<empty>", msg_chars,
+            )
+            self._add_messages(
+                backend,
+                [{"role": "user", "content": user_content},
+                 {"role": "assistant", "content": assistant_content}],
+                self._user_id,
+            )
+            return
+        if msg_chars > _COALESCE_FASTPATH_CHARS:
+            # fastpath：过长消息直接落库，不进入合并缓冲等待，避免长内容延迟入库
+            logger.debug(
+                "潮浪并忆：消息超过快速直写阈值，直接落库（session=%s，chars=%d，阈值=%d）",
+                session_id or "<empty>", msg_chars, _COALESCE_FASTPATH_CHARS,
+            )
+            self._add_messages(
+                backend,
+                [{"role": "user", "content": user_content},
+                 {"role": "assistant", "content": assistant_content}],
+                self._user_id,
+            )
+            self._coalesce_stats["direct"] += 1
+            return
+        # 进入按 user+session 分桶的合并缓冲
+        key = (self._user_id, session_id)
+        now = time.monotonic()
+        bucket = self._coalesce_buckets.get(key)
+        if bucket is None:
+            bucket = {"created": now, "last": now, "chars": 0, "messages": []}
+            self._coalesce_buckets[key] = bucket
+            logger.debug(
+                "潮浪并忆：创建合并缓冲桶（session=%s，idle=%ss，window=%ss）",
+                session_id or "<empty>", _COALESCE_IDLE_SECS, _COALESCE_WINDOW_SECS,
+            )
+        bucket["messages"].extend([
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": assistant_content},
+        ])
+        bucket["chars"] += msg_chars
+        bucket["last"] = now
+        turns = len(bucket["messages"]) // 2
+        logger.debug(
+            "潮浪并忆：消息进入合并缓冲（session=%s，chars=%d，桶内 turns=%d）",
+            session_id or "<empty>", msg_chars, turns,
+        )
+        if bucket["chars"] >= _COALESCE_MAX_CHARS or turns >= _COALESCE_MAX_TURNS:
+            self._flush_bucket(key, trigger="上限")
 
-            try:
-                messages = [
-                    {"role": "user", "content": user_content},
-                    {"role": "assistant", "content": assistant_content},
-                ]
-                backend.add(
-                    messages,
-                    user_id=self._user_id,
-                    agent_id=self._agent_id,
-                    infer=True,
-                    metadata=self._write_metadata(),
-                )
-                self._record_success()
-            except Exception as e:
-                self._record_failure()
-                logger.warning("Mem0 sync failed: %s", e)
+    def _flush_capped_buckets(self) -> None:
+        """冲刷达到条数/字符上限的分桶。"""
+        for key in list(self._coalesce_buckets.keys()):
+            bucket = self._coalesce_buckets[key]
+            turns = len(bucket["messages"]) // 2
+            if bucket["chars"] >= _COALESCE_MAX_CHARS or turns >= _COALESCE_MAX_TURNS:
+                self._flush_bucket(key, trigger="上限")
+
+    def _next_flush_deadline(self, now: float):
+        """返回所有桶中最先到期的空闲/窗口冲刷时刻；无桶时返回 None。"""
+        deadline = None
+        for bucket in self._coalesce_buckets.values():
+            due = min(bucket["last"] + _COALESCE_IDLE_SECS,
+                      bucket["created"] + _COALESCE_WINDOW_SECS)
+            if deadline is None or due < deadline:
+                deadline = due
+        return deadline
+
+    def _flush_due_buckets(self, now: float) -> None:
+        """冲刷空闲超时或窗口超时已到期的分桶。"""
+        for key in list(self._coalesce_buckets.keys()):
+            bucket = self._coalesce_buckets[key]
+            if now - bucket["last"] >= _COALESCE_IDLE_SECS:
+                self._flush_bucket(key, trigger="空闲超时")
+            elif now - bucket["created"] >= _COALESCE_WINDOW_SECS:
+                self._flush_bucket(key, trigger="窗口超时")
+
+    def _flush_bucket(self, key, trigger: str = "") -> None:
+        """把单个分桶合并为一次 backend.add 批量写入。
+
+        trigger 记录冲刷原因（上限/空闲超时/窗口超时/兜底），仅用于日志。
+        """
+        bucket = self._coalesce_buckets.pop(key, None)
+        if not bucket or not bucket["messages"]:
+            return
+        backend = self._backend
+        if backend is None:
+            return
+        messages = bucket["messages"]
+        turns = len(messages) // 2
+        user_id, session_id = key
+        try:
+            backend.add(
+                messages,
+                user_id=user_id,
+                agent_id=self._agent_id,
+                infer=True,
+                metadata=self._write_metadata(),
+            )
+            self._record_success()
+            saved = max(0, turns - 1)
+            self._coalesce_stats["batches"] += 1
+            self._coalesce_stats["saved_calls"] += saved
+            sid = session_id or "<empty>"
+            self._coalesce_stats["bucket_turns"][sid] = (
+                self._coalesce_stats["bucket_turns"].get(sid, 0) + turns
+            )
+            logger.info(
+                "潮浪并忆：合并 %d 条对话为 1 次写入（session=%s，省 %d 次调用，chars=%d%s）",
+                turns, sid, saved, bucket["chars"],
+                f"，原因：{trigger}" if trigger else "",
+            )
+        except Exception as e:
+            self._record_failure()
+            logger.warning(
+                "潮浪并忆：合并冲刷失败（session=%s，turns=%d，chars=%d，原因：%s）：%s",
+                session_id or "<empty>", turns, bucket["chars"], trigger or "未知", e,
+            )
+
+    def _add_messages(self, backend, messages, user_id) -> None:
+        """单条 backend.add（fastpath / 合并关闭时的逐条写入），统一错误处理。"""
+        try:
+            backend.add(
+                messages,
+                user_id=user_id,
+                agent_id=self._agent_id,
+                infer=True,
+                metadata=self._write_metadata(),
+            )
+            self._record_success()
+        except Exception as e:
+            self._record_failure()
+            logger.warning("Mem0 sync failed: %s", e)
+
+    def _flush_all_buckets(self) -> None:
+        """冲刷全部合并缓冲（shutdown / atexit 前兜底，保证记忆不丢失）。"""
+        for key in list(self._coalesce_buckets.keys()):
+            self._flush_bucket(key, trigger="兜底冲刷")
+
+    def coalesce_stats(self) -> dict:
+        """返回潮浪并忆的可观测统计快照（合并批次、省下调用、桶分布）。"""
+        return dict(
+            self._coalesce_stats,
+            bucket_turns=dict(self._coalesce_stats["bucket_turns"]),
+        )
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         return [SEARCH_SCHEMA, ADD_SCHEMA, UPDATE_SCHEMA, DELETE_SCHEMA]
@@ -646,6 +824,8 @@ class Mem0MemoryProvider(MemoryProvider):
         return tool_error(f"Unknown tool: {tool_name}")
 
     def _shutdown_backend(self):
+        # atexit 兜底：先冲刷合并缓冲再关闭后端，保证记忆不丢失
+        self._flush_all_buckets()
         try:
             if self._backend:
                 self._backend.close()
@@ -657,6 +837,8 @@ class Mem0MemoryProvider(MemoryProvider):
         for t in (self._prefetch_thread, self._sync_consumer_thread):
             if t and t.is_alive():
                 t.join(timeout=5.0)
+        # 兜底冲刷合并缓冲，避免关闭时丢失尚未写入的记忆
+        self._flush_all_buckets()
         self._shutdown_backend()
 
 

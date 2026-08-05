@@ -31,6 +31,27 @@ Behavioral settings live in `$HERMES_HOME/mem0.json` (set them via `hermes memor
 | `agent_id` | `hermes` | Agent identifier |
 | `rerank` | `false` | Rerank search results for relevance (platform mode only) |
 
+### 潮浪并忆（Tidal Coalescing）— 批量合并写入
+
+`sync_turn` 不再逐条调用服务端事实提取，而是把同一 `user+session` 的短对话合并成一次批量写入，摊薄 LLM 调用次数（写路径降本）。默认开启，全部参数通过环境变量配置（与 `MEM0_HOST` 等同风格）：
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `MEM0_COALESCE_ENABLED` | `true` | 总开关。`false` 时回到逐条写入的旧语义 |
+| `MEM0_COALESCE_IDLE_SECS` | `5` | 空闲冲刷：桶内无新消息超过该秒数即写入 |
+| `MEM0_COALESCE_WINDOW_SECS` | `15` | 窗口冲刷：桶从首条进入起超过该秒数即写入 |
+| `MEM0_COALESCE_MAX_TURNS` | `5` | 条数上限：桶内对话轮数达到该值即写入 |
+| `MEM0_COALESCE_MAX_CHARS` | `4000` | 字符上限：桶内累计字符达到该值即写入 |
+| `MEM0_COALESCE_FASTPATH_CHARS` | `2000` | fastpath 阈值：单条消息超过该字符数时直接写入，不进合并缓冲 |
+
+示例：密集对话场景可调大窗口提高合并率
+
+```bash
+echo "MEM0_COALESCE_WINDOW_SECS=30" >> ~/.hermes/.env
+```
+
+合并统计（批次、省下的调用数、按 session 分布）通过 `coalesce_stats()` 查询，日志中可见「潮浪并忆：合并 N 条对话为 1 次写入」。
+
 The plugin has three connection modes:
 
 - **Platform** — Mem0's hosted cloud (`api.mem0.ai`). Set `MEM0_API_KEY`. (default)

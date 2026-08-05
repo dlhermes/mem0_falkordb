@@ -1225,3 +1225,47 @@ class TestSemanticMergeUpdate:
         payload = self._stored_payload(memory)
         assert payload["data"] == new_text
         assert any("Semantic merge failed" in r.message for r in caplog.records)
+
+
+class TestExistingHashesFromStore:
+    def test_extracts_hashes_skipping_missing(self):
+        from types import SimpleNamespace
+
+        from mem0.memory.main import _existing_hashes_from_store
+
+        rows = [
+            SimpleNamespace(payload={"hash": "abc", "data": "m1"}),
+            SimpleNamespace(payload={"data": "no-hash"}),
+            SimpleNamespace(payload=None),
+            SimpleNamespace(payload={"hash": "def", "data": "m2"}),
+        ]
+
+        def fake_list(filters=None, top_k=None):
+            assert filters == {"user_id": "u1"}
+            return rows
+
+        store = SimpleNamespace(list=fake_list)
+        assert _existing_hashes_from_store(store, {"user_id": "u1"}) == {"abc", "def"}
+
+    def test_handles_nested_list_return_shape(self):
+        from types import SimpleNamespace
+
+        from mem0.memory.main import _existing_hashes_from_store
+
+        store = SimpleNamespace(
+            list=lambda filters=None, top_k=None: [[SimpleNamespace(payload={"hash": "xyz"})]]
+        )
+        assert _existing_hashes_from_store(store, {}) == {"xyz"}
+
+    def test_list_failure_degrades_to_empty(self, caplog):
+        import logging
+
+        from mem0.memory.main import _existing_hashes_from_store
+
+        def boom(filters=None, top_k=None):
+            raise RuntimeError("store down")
+
+        store = SimpleNamespace(list=boom)
+        with caplog.at_level(logging.DEBUG):
+            assert _existing_hashes_from_store(store, {}) == set()
+        assert any("Full-scan hash lookup failed" in r.message for r in caplog.records)
