@@ -285,6 +285,7 @@ curl -s http://<llm-host>/v1/chat/completions \
 |---|---|---|
 | `MEM0_GRAPH_MAX_WORKERS` | `5` | 图写入线程池最大工作线程数（图实体提取并发数，1 = 串行） |
 | `MEM0_GRAPH_SEARCH_WORKERS` | `2` | 图搜索线程池最大工作线程数（与写池分离，批量写入时写任务不阻塞搜索） |
+| `MEM0_GRAPH_SEARCH_TOKENS` | `0`（不限制） | 参与图搜索的 token 数量上限。设置后限制分词 token 数减少串行查询；默认不限制。图数据用独立 embedder 时通常不需要此限制，与 voyageai 共用时可设 15-25 控制 embed 输入规模 |
 | `MEM0_GRAPH_THRESHOLD` | `0.7` | 图搜索相似度阈值（0-1，env 优先级最高，config.json `graph_store.threshold` 次之） |
 
 ### 重排序
