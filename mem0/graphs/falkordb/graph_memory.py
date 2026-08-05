@@ -55,9 +55,9 @@ _MAX_GRAPH_CACHE = 256
 # Graph search query/token 上限（防止超长 query 分词出大量 token，
 # 串行执行 embed + FalkorDB 查询导致 15s 超时降级为 vector-only）
 _MAX_GRAPH_QUERY_CHARS = 4000  # 与 rerank 截断策略一致
-# 图搜索 token 上限：之前设为 25 是为了控制 voyageai embed 输入规模；
-# 图数据已用独立 bge-m3 embedder 后此限制不再必要，取消限制（设为 0 表示不限制）。
-_MAX_GRAPH_SEARCH_TOKENS = 0
+# 图搜索 token 上限（环境变量 MEM0_GRAPH_SEARCH_TOKENS，不设置或设为 0 表示不限制）
+# 之前设 25 是为控制 voyageai embed 输入规模；图数据用独立 bge-m3 后通常不需要此限制
+_MAX_GRAPH_SEARCH_TOKENS = int(os.environ.get("MEM0_GRAPH_SEARCH_TOKENS", "0"))
 
 _CHINESE_STOP_WORDS = frozenset({
     "的", "了", "是", "在", "和", "也", "都", "就", "有", "不",
