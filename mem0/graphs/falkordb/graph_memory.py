@@ -724,26 +724,55 @@ class MemoryGraph:
         _unique_nodes = list(dict.fromkeys(node_list))
         _embedding_cache = {}
         if _unique_nodes:
+            _t_batch = _time.perf_counter()
             try:
                 _embeddings = self.embedding_model.embed_batch(_unique_nodes, "search")
                 _embedding_cache = dict(zip(_unique_nodes, _embeddings))
             except Exception as e:
                 logger.warning(
-                    "graph embed_batch failed (%d texts), falling back to individual embed: %s",
-                    len(_unique_nodes), e,
+                    "graph embed_batch failed (%d texts, e.g. '%s'), elapsed=%.2fs, falling back to individual embed: %s",
+                    len(_unique_nodes), _unique_nodes[0][:60], _time.perf_counter() - _t_batch, e,
                 )
+                _n_ok = 0
                 for text in _unique_nodes:
+                    _t_embed = _time.perf_counter()
                     try:
                         _embedding_cache[text] = self.embedding_model.embed(text, "search")
+                        _n_ok += 1
+                        logger.info(
+                            "graph fallback embed ok for '%s', elapsed=%.2fs",
+                            text, _time.perf_counter() - _t_embed,
+                        )
                     except Exception as embed_err:
-                        logger.warning("graph entity embed failed for '%s': %s", text, embed_err)
+                        logger.warning(
+                            "graph fallback embed failed for '%s', elapsed=%.2fs: %s",
+                            text, _time.perf_counter() - _t_embed, embed_err,
+                        )
+                logger.warning(
+                    "graph fallback embed done: %d/%d texts embedded, total elapsed=%.2fs",
+                    _n_ok, len(_unique_nodes), _time.perf_counter() - _t_batch,
+                )
 
         if _embedding_cache:
             _first_embedding = next(iter(_embedding_cache.values()))
             self._ensure_vector_index(len(_first_embedding), user_id=uid)
 
         for node in node_list:
-            n_embedding = _embedding_cache.get(node) or self.embedding_model.embed(node, "search")
+            n_embedding = _embedding_cache.get(node)
+            if not n_embedding:
+                _t_miss = _time.perf_counter()
+                try:
+                    n_embedding = self.embedding_model.embed(node, "search")
+                except Exception as embed_err:
+                    logger.warning(
+                        "graph search cache-miss embed failed for '%s', elapsed=%.2fs: %s",
+                        node, _time.perf_counter() - _t_miss, embed_err,
+                    )
+                    raise
+                logger.warning(
+                    "graph search cache-miss re-embed for '%s', elapsed=%.2fs",
+                    node, _time.perf_counter() - _t_miss,
+                )
 
             label = "__Entity__" if self.use_base_label else "Node"
 
