@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from mem0.graphs.falkordb.config import FalkorDBConfig
 from mem0.llms.configs import LlmConfig
+from mem0.embeddings.configs import EmbedderConfig
 
 
 class MemoryGraphConfig(BaseModel):
@@ -19,6 +20,10 @@ class GraphStoreConfig(BaseModel):
         description="Configuration for the specific graph store", default=None
     )
     llm: Optional[LlmConfig] = Field(description="LLM configuration for querying the graph store", default=None)
+    embedder: Optional[EmbedderConfig] = Field(
+        description="Embedder configuration for the graph store (defaults to global embedder if not set)",
+        default=None,
+    )
     custom_prompt: Optional[str] = Field(
         description="Custom prompt to fetch entities from the given text", default=None
     )

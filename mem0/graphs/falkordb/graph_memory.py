@@ -211,10 +211,19 @@ class MemoryGraph:
             username=self.config.graph_store.config.username,
             password=self.config.graph_store.config.password,
         )
+        # 图数据优先用自己的 embedder，未配置时 fallback 到全局 embedder
+        if (
+            self.config.graph_store
+            and self.config.graph_store.embedder
+            and self.config.graph_store.embedder.provider
+        ):
+            _embedder_provider = self.config.graph_store.embedder.provider
+            _embedder_config = self.config.graph_store.embedder.config
+        else:
+            _embedder_provider = self.config.embedder.provider
+            _embedder_config = self.config.embedder.config
         self.embedding_model = EmbedderFactory.create(
-            self.config.embedder.provider,
-            self.config.embedder.config,
-            self.config.vector_store.config,
+            _embedder_provider, _embedder_config, self.config.vector_store.config,
         )
 
         self.use_base_label = getattr(
