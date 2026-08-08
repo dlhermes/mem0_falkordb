@@ -38,6 +38,7 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **矛盾检测** | ❌ 无 | ✅ `MEM0_ENABLE_CONTRADICTION=true` 启用，写入时实时判定矛盾，自动 DELETE 旧记忆 |
 | **搜索深度路由** | ❌ 无 | ✅ 三级深度（minimal/standard/full），自动识别废话跳过检索，降本 40-60%。`MEM0_SEARCH_DEPTH_DEFAULT=full` 确保零行为变化 |
 | **用户纠正感知** | ❌ 无 | ✅ 检测"不对/记错了"等纠正信号→自动降 threshold、扩 top_k、强制 full depth。Agent 能自我纠正 |
+| **图记忆时效** | 冲突消解物理删除（误判=永久丢失） | ✅ 冲突改为失效保留（`invalidated_at` 标记），检索默认只出有效事实，同事实重现自动复活，误判可恢复 |
 
 ## 架构
 
