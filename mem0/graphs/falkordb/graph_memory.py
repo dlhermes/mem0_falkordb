@@ -44,7 +44,7 @@ from mem0.graphs.tools import (
     RELATIONS_STRUCT_TOOL,
     RELATIONS_TOOL,
 )
-from mem0.graphs.utils import EXTRACT_RELATIONS_PROMPT, get_delete_messages
+from mem0.graphs.utils import EXTRACT_RELATIONS_PROMPT, get_invalidate_messages
 from mem0.utils.factory import EmbedderFactory, LlmFactory
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,11 @@ for _g in _RELATION_CN_SYNONYM_GROUPS:
         _RELATION_CN_SYNONYM_LOOKUP[_w] = _g
 
 _threshold_cache = {"mtime": 0, "value": 0.7}
+
+# 图关系失效时间字段：冲突消解时被替换的旧关系不再物理删除，
+# 而是写入该字段标记失效（时间戳）；检索时默认排除已失效关系。
+# 未设置该字段的存量关系视为有效（向后兼容）。
+_RELATION_INVALIDATED_AT = "invalidated_at"
 
 
 def _read_dynamic_threshold():
@@ -360,19 +365,23 @@ class MemoryGraph:
         search_output = self._search_graph_db(
             node_list=list(entity_type_map.keys()), filters=filters
         )
-        to_be_deleted = self._get_delete_entities_from_search_output(
+        to_be_invalidated = self._get_entities_to_invalidate(
             search_output, data, filters
         )
 
-        deleted_entities = self._delete_entities(to_be_deleted, filters)
+        invalidated_entities = self._invalidate_entities(to_be_invalidated, filters)
         added_entities = self._add_entities(to_be_added, filters, entity_type_map)
 
         _elapsed = _time.perf_counter() - _t0
         logger.info(
-            "graph add done: added=%d, deleted=%d, elapsed=%.2fs",
-            len(added_entities), len(deleted_entities), _elapsed,
+            "graph add done: added=%d, invalidated=%d, elapsed=%.2fs",
+            len(added_entities), len(invalidated_entities), _elapsed,
         )
-        return {"deleted_entities": deleted_entities, "added_entities": added_entities}
+        # 兼容对外返回结构：冲突消解不再物理删除，仅标记失效（旧关系保留在图中）
+        return {
+            "deleted_entities": invalidated_entities,
+            "added_entities": added_entities,
+        }
 
     def search(self, query, filters, limit=100):
         """Search for memories and related graph data."""
@@ -423,7 +432,10 @@ class MemoryGraph:
                 _type_clauses.append(f"type(r) STARTS WITH ${_tpname}")
                 _or_params[_tpname] = _token
 
-            _where_clause = f"WHERE {' OR '.join(_type_clauses)}"
+            _where_clause = (
+                f"WHERE ({' OR '.join(_type_clauses)}) "
+                f"AND r.{_RELATION_INVALIDATED_AT} IS NULL"
+            )
 
             try:
                 _cn_results = self.graph.query(
@@ -533,12 +545,14 @@ class MemoryGraph:
         if node_props_str:
             query = f"""
             MATCH (n {self.node_label} {{{node_props_str}}})-[r]->(m {self.node_label})
+            WHERE r.{_RELATION_INVALIDATED_AT} IS NULL
             RETURN n.name AS source, type(r) AS relationship, m.name AS target
             LIMIT {int(limit)}
             """
         else:
             query = f"""
             MATCH (n {self.node_label})-[r]->(m {self.node_label})
+            WHERE r.{_RELATION_INVALIDATED_AT} IS NULL
             RETURN n.name AS source, type(r) AS relationship, m.name AS target
             LIMIT {int(limit)}
             """
@@ -677,8 +691,13 @@ class MemoryGraph:
         logger.debug(f"Extracted entities: {entities}")
         return entities
 
-    def _get_delete_entities_from_search_output(self, search_output, data, filters):
-        """Get the entities to be deleted from the search output."""
+    def _get_entities_to_invalidate(self, search_output, data, filters):
+        """Get the entities to be invalidated from the search output.
+
+        冲突消解：LLM 判定与新信息矛盾/过时的旧关系，返回待失效列表。
+        LLM 输出工具仍名为 delete_graph_memory（工具定义在 tools.py，保持不动），
+        语义上判定的是「应被失效」的关系；代码层不再物理删除，只标记失效。
+        """
         search_output_string = format_entities(search_output)
 
         user_identity = f"user_id: {filters['user_id']}"
@@ -687,7 +706,7 @@ class MemoryGraph:
         if filters.get("run_id"):
             user_identity += f", run_id: {filters['run_id']}"
 
-        system_prompt, user_prompt = get_delete_messages(
+        system_prompt, user_prompt = get_invalidate_messages(
             search_output_string, data, user_identity
         )
 
@@ -703,13 +722,13 @@ class MemoryGraph:
             tools=_tools,
         )
 
-        to_be_deleted = []
+        to_be_invalidated = []
         for item in memory_updates.get("tool_calls", []):
             if item.get("name") == "delete_graph_memory":
-                to_be_deleted.append(item.get("arguments"))
-        to_be_deleted = self._remove_spaces_from_entities(to_be_deleted)
-        logger.debug(f"Deleted relationships: {to_be_deleted}")
-        return to_be_deleted
+                to_be_invalidated.append(item.get("arguments"))
+        to_be_invalidated = self._remove_spaces_from_entities(to_be_invalidated)
+        logger.debug(f"Relationships to invalidate: {to_be_invalidated}")
+        return to_be_invalidated
 
     # ------------------------------------------------------------------
     # FalkorDB-specific Cypher: graph search with vector similarity
@@ -811,14 +830,14 @@ class MemoryGraph:
                 match_props = f" {{{node_props_str}}}" if node_props_str else ""
                 out_query = f"""
                 MATCH (n {self.node_label})-[r]->(m {self.node_label}{match_props})
-                WHERE id(n) = $node_id
+                WHERE id(n) = $node_id AND r.{_RELATION_INVALIDATED_AT} IS NULL
                 RETURN n.name AS source, id(n) AS source_id, type(r) AS relationship,
                        id(r) AS relation_id, m.name AS destination, id(m) AS destination_id,
                        r.relation_cn AS relation_cn
                 """
                 in_query = f"""
                 MATCH (n {self.node_label})<-[r]-(m {self.node_label}{match_props})
-                WHERE id(n) = $node_id
+                WHERE id(n) = $node_id AND r.{_RELATION_INVALIDATED_AT} IS NULL
                 RETURN m.name AS source, id(m) AS source_id, type(r) AS relationship,
                        id(r) AS relation_id, n.name AS destination, id(n) AS destination_id,
                        r.relation_cn AS relation_cn
@@ -847,12 +866,16 @@ class MemoryGraph:
     # FalkorDB-specific Cypher: entity deletion
     # ------------------------------------------------------------------
 
-    def _delete_entities(self, to_be_deleted, filters):
-        """Delete entities from the graph."""
+    def _invalidate_entities(self, to_be_invalidated, filters):
+        """Mark entities (relationships) as invalidated instead of physically deleting.
+
+        冲突消解改为「失效保留」：给旧关系写入失效时间戳，关系本身保留在图中，
+        检索路径通过 `invalidated_at IS NULL` 默认排除已失效关系。
+        """
         uid = self._user_id(filters)
         results = []
 
-        for item in to_be_deleted:
+        for item in to_be_invalidated:
             source = item["source"]
             destination = item["destination"]
             relationship = item["relationship"]
@@ -871,7 +894,7 @@ class MemoryGraph:
             MATCH (n {self.node_label} {{{source_props_str}}})
             -[r:{_safe_relationship}]->
             (m {self.node_label} {{{dest_props_str}}})
-            DELETE r
+            SET r.{_RELATION_INVALIDATED_AT} = timestamp()
             RETURN
                 n.name AS source,
                 m.name AS target,
@@ -980,7 +1003,8 @@ class MemoryGraph:
                     r.relation_cn = $relation_cn
                 ON MATCH SET
                     r.mentions = coalesce(r.mentions, 0) + 1,
-                    r.relation_cn = $relation_cn
+                    r.relation_cn = $relation_cn,
+                    r.{_RELATION_INVALIDATED_AT} = null
                 RETURN source.name AS source, type(r) AS relationship, destination.name AS target
                 """
 
@@ -1015,7 +1039,8 @@ class MemoryGraph:
                     r.relation_cn = $relation_cn
                 ON MATCH SET
                     r.mentions = coalesce(r.mentions, 0) + 1,
-                    r.relation_cn = $relation_cn
+                    r.relation_cn = $relation_cn,
+                    r.{_RELATION_INVALIDATED_AT} = null
                 RETURN source.name AS source, type(r) AS relationship, destination.name AS target
                 """
 
@@ -1042,7 +1067,8 @@ class MemoryGraph:
                 ON MATCH SET
                     r.mentions = coalesce(r.mentions, 0) + 1,
                     r.updated_at = timestamp(),
-                    r.relation_cn = $relation_cn
+                    r.relation_cn = $relation_cn,
+                    r.{_RELATION_INVALIDATED_AT} = null
                 RETURN source.name AS source, type(r) AS relationship, destination.name AS target
                 """
 
@@ -1079,7 +1105,7 @@ class MemoryGraph:
                 WITH source, destination
                 MERGE (source)-[rel:{_safe_relationship}]->(destination)
                 ON CREATE SET rel.created = timestamp(), rel.mentions = 1, rel.relation_cn = $relation_cn
-                ON MATCH SET rel.mentions = coalesce(rel.mentions, 0) + 1, rel.relation_cn = $relation_cn
+                ON MATCH SET rel.mentions = coalesce(rel.mentions, 0) + 1, rel.relation_cn = $relation_cn, rel.{_RELATION_INVALIDATED_AT} = null
                 RETURN source.name AS source, type(rel) AS relationship, destination.name AS target
                 """
 
