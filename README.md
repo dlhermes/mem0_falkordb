@@ -348,6 +348,18 @@ _is_voyage = "voyageai" in (self.config.openai_base_url or "")
 
 同时保留上游全部 Provider：Zero Entropy、Cohere、Sentence Transformer、HuggingFace、LLM-based。详见 [server/README.md#10-reranker-提供器选择](server/README.md#10-reranker-提供器选择)。
 
+### 图记忆时效（Temporal Validity）
+
+上游的图冲突消解是**破坏性**的：LLM 判定旧关系与新信息矛盾后，直接 `DELETE r` 物理删除——旧事实没有任何历史痕迹，LLM 误判 = 信息永久丢失。本 Fork 改为**失效保留**：
+
+- 冲突消解时旧关系**不再删除**，而是写入 `invalidated_at` 时间戳标记失效（`mem0/graphs/falkordb/graph_memory.py` `_invalidate_entities`）
+- 检索路径（`search` / `get_all`）默认只返回未失效关系（`invalidated_at IS NULL`），已推翻的事实不再污染图上下文
+- **同事实再次出现自动复活**：MERGE 边命中已失效关系时重置 `invalidated_at = null`，与新事实重新确认的语义一致
+- 存量关系无 `invalidated_at` 字段视为有效，向后兼容
+- 零额外 LLM 调用——失效时间取冲突发生时戳，不引入新的模型请求
+
+**价值**：① 图检索上下文质量——被推翻的事实不再喂给 agent；② 误判兜底——LLM 冲突判断错了只是「误失效」，可追溯、可恢复，而非永久丢失。
+
 ### 记忆衰减
 
 上游无此功能。本 Fork 在搜索 pipeline 中增加了指数衰减 + Lane 分轨：

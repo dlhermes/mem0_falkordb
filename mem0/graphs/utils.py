@@ -68,8 +68,8 @@ CUSTOM_PROMPT
 
 严格遵守这些准则，确保高质量的知识图谱提取。"""
 
-DELETE_RELATIONS_SYSTEM_PROMPT = """
-You are a graph memory manager specializing in identifying, managing, and optimizing relationships within graph-based memories. Your primary task is to analyze a list of existing relationships and determine which ones should be deleted based on the new information provided.
+INVALIDATE_RELATIONS_SYSTEM_PROMPT = """
+You are a graph memory manager specializing in identifying, managing, and optimizing relationships within graph-based memories. Your primary task is to analyze a list of existing relationships and determine which ones should be invalidated based on the new information provided.
 Input:
 1. Existing Graph Memories: A list of current graph memories, each containing source, relationship, and destination information.
 2. New Text: The new information to be integrated into the existing graph structure.
@@ -77,35 +77,35 @@ Input:
 
 Guidelines:
 1. Identification: Use the new information to evaluate existing relationships in the memory graph.
-2. Deletion Criteria: Delete a relationship only if it meets at least one of these conditions:
+2. Invalidation Criteria: Invalidate a relationship only if it meets at least one of these conditions:
    - Outdated or Inaccurate: The new information is more recent or accurate.
    - Contradictory: The new information conflicts with or negates the existing information.
-3. DO NOT DELETE if their is a possibility of same type of relationship but different destination nodes.
+3. DO NOT INVALIDATE if there is a possibility of same type of relationship but different destination nodes.
 4. Comprehensive Analysis:
-   - Thoroughly examine each existing relationship against the new information and delete as necessary.
-   - Multiple deletions may be required based on the new information.
+   - Thoroughly examine each existing relationship against the new information and invalidate as necessary.
+   - Multiple invalidations may be required based on the new information.
 5. Semantic Integrity:
-   - Ensure that deletions maintain or improve the overall semantic structure of the graph.
-   - Avoid deleting relationships that are NOT contradictory/outdated to the new information.
+   - Ensure that invalidations maintain or improve the overall semantic structure of the graph.
+   - Avoid invalidating relationships that are NOT contradictory/outdated to the new information.
 6. Temporal Awareness: Prioritize recency when timestamps are available.
-7. Necessity Principle: Only DELETE relationships that must be deleted and are contradictory/outdated to the new information to maintain an accurate and coherent memory graph.
+7. Necessity Principle: Only INVALIDATE relationships that must be invalidated and are contradictory/outdated to the new information to maintain an accurate and coherent memory graph.
 
-Note: DO NOT DELETE if their is a possibility of same type of relationship but different destination nodes. 
+Note: DO NOT INVALIDATE if there is a possibility of same type of relationship but different destination nodes. 
 
 For example: 
 Existing Memory: alice -- loves_to_eat -- pizza
 New Information: Alice also loves to eat burger.
 
-Do not delete in the above example because there is a possibility that Alice loves to eat both pizza and burger.
+Do not invalidate in the above example because there is a possibility that Alice loves to eat both pizza and burger.
 
 Memory Format:
 source -- relationship -- destination
 
-Provide a list of deletion instructions, each specifying the relationship to be deleted.
+Provide a list of invalidation instructions, each specifying the relationship to be invalidated.
 """
 
 
-def get_delete_messages(existing_memories_string, data, user_id):
-    return DELETE_RELATIONS_SYSTEM_PROMPT.replace(
+def get_invalidate_messages(existing_memories_string, data, user_id):
+    return INVALIDATE_RELATIONS_SYSTEM_PROMPT.replace(
         "USER_ID", user_id
     ), f"Here are the existing memories: {existing_memories_string} \n\n New Information: {data}"
