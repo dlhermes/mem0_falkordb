@@ -17,6 +17,10 @@ CREATE INDEX IF NOT EXISTS idx_sk_category ON search_keywords(category);
 """
 
 SEED_DATA = [
+    ("minimal", "你好", "exact", "zh"),
+    ("minimal", "你好呀", "exact", "zh"),
+    ("minimal", "你好啊", "exact", "zh"),
+    ("minimal", "您好", "exact", "zh"),
     ("minimal", "好", "exact", "zh"),
     ("minimal", "嗯", "exact", "zh"),
     ("minimal", "哦", "exact", "zh"),
@@ -45,6 +49,12 @@ SEED_DATA = [
     ("minimal", "可以", "exact", "zh"),
     ("minimal", "成", "exact", "zh"),
     ("minimal", "行吧", "exact", "zh"),
+    ("minimal", "不用干预", "exact", "zh"),
+    ("minimal", "开始吧", "exact", "zh"),
+    ("minimal", "你继续", "exact", "zh"),
+    ("minimal", "继续吧", "exact", "zh"),
+    ("minimal", "不用了", "exact", "zh"),
+    ("minimal", "就这样", "exact", "zh"),
     ("minimal", "懂了", "exact", "zh"),
     ("minimal", "了解了", "exact", "zh"),
     ("minimal", "没问题", "exact", "zh"),
