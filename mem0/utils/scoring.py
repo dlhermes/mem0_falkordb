@@ -10,6 +10,7 @@ Provides:
 from __future__ import annotations
 
 import math
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 
@@ -67,6 +68,7 @@ def score_and_rank(
     decay_fn: Optional[Callable[[Dict], float]] = None,
     salience_scores: Optional[Dict[str, Dict[str, float]]] = None,
     salience_rank_weight: float = 0.0,
+    trace_stats: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Score candidates additively and return top-k results.
 
@@ -101,6 +103,9 @@ def score_and_rank(
             when non-empty.
         salience_rank_weight: Multiplicative weight for the salience boost;
             default 0 keeps ordering identical to current behavior.
+        trace_stats: Optional dict; when provided, RECALL funnel counts
+            (threshold/decay/topk transitions) and latencies are written into
+            it. None (default) disables all collection — zero behavior change.
 
     Returns:
         List of scored result dicts sorted by combined score descending.
@@ -116,14 +121,33 @@ def score_and_rank(
 
     scored: List[Dict[str, Any]] = []
 
+    trace_active = trace_stats is not None
+    if trace_active:
+        _t0 = time.perf_counter()
+        _threshold_ms = 0.0
+        _decay_ms = 0.0
+        _before_threshold = 0
+        _after_threshold = 0
+        _after_decay = 0
+
     for result in semantic_results:
         mem_id = result.get("id")
         if mem_id is None:
             continue
 
+        if trace_active:
+            _t_th = time.perf_counter()
+            _before_threshold += 1
+
         semantic_score = result.get("score") or 0.0
         if semantic_score < threshold:
+            if trace_active:
+                _threshold_ms += time.perf_counter() - _t_th
             continue
+
+        if trace_active:
+            _threshold_ms += time.perf_counter() - _t_th
+            _after_threshold += 1
 
         mem_id_str = str(mem_id)
         bm25_score = bm25_scores.get(mem_id_str, 0.0)
@@ -131,7 +155,11 @@ def score_and_rank(
 
         decay_multiplier = 1.0
         if decay_fn is not None:
+            if trace_active:
+                _t_dec = time.perf_counter()
             decay_multiplier = decay_fn(result.get("payload", {}))
+            if trace_active:
+                _decay_ms += time.perf_counter() - _t_dec
         decayed_semantic = semantic_score * decay_multiplier
 
         raw_combined = decayed_semantic + bm25_score + entity_boost
@@ -185,6 +213,21 @@ def score_and_rank(
                 )
             scored_result["score_details"] = score_details
         scored.append(scored_result)
+        if trace_active:
+            _after_decay += 1
 
     scored.sort(key=lambda x: x["score"], reverse=True)
+    if trace_stats is not None:
+        trace_stats.update(
+            {
+                "before_threshold": _before_threshold,
+                "after_threshold": _after_threshold,
+                "after_decay": _after_decay,
+                "before_topk": len(scored),
+                "after_topk": min(len(scored), top_k),
+                "threshold_latency_ms": _threshold_ms * 1000,
+                "decay_latency_ms": _decay_ms * 1000,
+                "scoring_latency_ms": (time.perf_counter() - _t0) * 1000,
+            }
+        )
     return scored[:top_k]

@@ -607,6 +607,40 @@ def _payload_is_expired(payload: Optional[Dict[str, Any]]) -> bool:
         return False
 
 
+def _trace_stages(
+    depth,
+    *,
+    candidate_count=0,
+    threshold_count=0,
+    decay_count=0,
+    graph_count=0,
+    rerank_count=0,
+    final_count=0,
+    candidate_latency_ms=0.0,
+    threshold_latency_ms=0.0,
+    decay_latency_ms=0.0,
+    graph_latency_ms=0.0,
+    rerank_latency_ms=0.0,
+    final_latency_ms=0.0,
+):
+    """Build the RECALL funnel trace dict for search().
+
+    Each stage reports a candidate count and its latency in ms. Callers
+    without a real pipeline step pass the previous count and 0 latency.
+    """
+    return {
+        "depth": depth,
+        "stages": [
+            {"stage": "candidates", "count": candidate_count, "latency_ms": round(candidate_latency_ms, 2)},
+            {"stage": "threshold", "count": threshold_count, "latency_ms": round(threshold_latency_ms, 2)},
+            {"stage": "decay", "count": decay_count, "latency_ms": round(decay_latency_ms, 2)},
+            {"stage": "graph", "count": graph_count, "latency_ms": round(graph_latency_ms, 2)},
+            {"stage": "rerank", "count": rerank_count, "latency_ms": round(rerank_latency_ms, 2)},
+            {"stage": "final", "count": final_count, "latency_ms": round(final_latency_ms, 2)},
+        ],
+    }
+
+
 def resolve_search_depth(query: str, db_conn=None) -> str:
     """Determine search depth based on query characteristics.
 
@@ -1861,6 +1895,7 @@ class Memory(MemoryBase):
         reference_date: Optional[Any] = None,
         show_expired: bool = False,
         depth: Optional[str] = None,
+        trace: bool = False,
         **kwargs,
     ):
         """
@@ -1894,10 +1929,14 @@ class Memory(MemoryBase):
             explain (bool, optional): Whether to include score_details for each result. Defaults to False.
             reference_date (Any, optional): Platform-only temporal parameter. Not supported in OSS.
             show_expired (bool, optional): Include expired memories. Defaults to False.
+            depth (str, optional): Search depth override (minimal/standard/full). Defaults to None.
+            trace (bool, optional): Return a "trace" key with the RECALL funnel
+                stage counts and latencies. Defaults to False.
 
         Returns:
             dict: A dictionary containing the search results under a "results" key.
                   Example for v1.1+: `{"results": [{"id": "...", "memory": "...", "score": 0.8, ...}]}`
+                  When trace=True, a "trace" key with per-stage count/latency is added.
 
         Raises:
             ValueError: If filters doesn't contain at least one of user_id, agent_id, run_id,
@@ -1970,19 +2009,21 @@ class Memory(MemoryBase):
             depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
         _min_ttl = int(os.environ.get("MEM0_SEARCH_CACHE_TTL", "0"))
         _std_ttl = int(os.environ.get("MEM0_SEARCH_STD_CACHE_TTL", "0"))
-        _cache_key = (query, json.dumps(effective_filters, sort_keys=True, default=str))
+        _cache_key = (query, json.dumps(effective_filters, sort_keys=True, default=str), trace)
 
         if depth == "minimal":
             if _min_ttl > 0:
                 _cached = self._search_depth_cache.get(_cache_key)
                 if _cached and (time.perf_counter() - _cached[0]) < _min_ttl:
                     return _cached[1]
-                _empty_result = {"results": []}
+            _empty_result = {"results": []}
+            if trace:
+                _empty_result["trace"] = _trace_stages(depth)
+            if _min_ttl > 0:
                 self._search_depth_cache[_cache_key] = (time.perf_counter(), _empty_result)
                 if len(self._search_depth_cache) > _SEARCH_DEPTH_CACHE_MAX:
                     self._search_depth_cache.popitem(last=False)
-                return _empty_result
-            return {"results": []}
+            return _empty_result
 
         if depth == "standard" and _std_ttl > 0:
             _cached = self._search_depth_cache.get(_cache_key)
@@ -1990,10 +2031,17 @@ class Memory(MemoryBase):
                 return _cached[1]
 
         search_start = time.perf_counter()
+        _trace_stats = {} if trace else None
         original_memories = self._search_vector_store(
-            query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired
+            query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired,
+            trace_stats=_trace_stats,
         )
         search_elapsed_seconds = time.perf_counter() - search_start
+
+        graph_count = len(original_memories)
+        rerank_count = len(original_memories)
+        _graph_latency_ms = 0.0
+        _rerank_latency_ms = 0.0
 
         if depth == "standard":
             pass  # vector-only, no graph or rerank
@@ -2003,6 +2051,7 @@ class Memory(MemoryBase):
             # behavior) so the reranker scores them against the query — with
             # pure-Chinese relation types the fragment text matches the query
             # semantically and should survive the rerank threshold.
+            _graph_t0 = time.perf_counter()
             if self.graph:
                 try:
                     graph_future = self._graph_search_executor.submit(self.graph.search, query, effective_filters, limit)
@@ -2043,8 +2092,11 @@ class Memory(MemoryBase):
                     )
                 except Exception as e:
                     logger.warning(f"Graph search failed: {e}, using vector store results only")
+            _graph_latency_ms = (time.perf_counter() - _graph_t0) * 1000
+            graph_count = len(original_memories)
 
             # Apply reranking if enabled and reranker is available
+            _rerank_t0 = time.perf_counter()
             _rerank_applied = False
             if rerank and self.reranker and original_memories:
                 try:
@@ -2090,6 +2142,8 @@ class Memory(MemoryBase):
                     ),
                     reverse=True,
                 )
+            _rerank_latency_ms = (time.perf_counter() - _rerank_t0) * 1000
+            rerank_count = len(original_memories)
 
         if temporal_usage_notice:
             display_temporal_usage_notice(self, "sync", "search", *temporal_usage_notice)
@@ -2108,6 +2162,22 @@ class Memory(MemoryBase):
             display_first_run_notice(self, "sync", "search")
 
         _results = {"results": original_memories}
+        if trace:
+            _results["trace"] = _trace_stages(
+                depth,
+                candidate_count=_trace_stats.get("candidate_count", 0),
+                threshold_count=_trace_stats.get("after_threshold", 0),
+                decay_count=_trace_stats.get("after_decay", 0),
+                graph_count=graph_count,
+                rerank_count=rerank_count,
+                final_count=len(original_memories),
+                candidate_latency_ms=_trace_stats.get("candidates_latency_ms", 0.0),
+                threshold_latency_ms=_trace_stats.get("threshold_latency_ms", 0.0),
+                decay_latency_ms=_trace_stats.get("decay_latency_ms", 0.0),
+                graph_latency_ms=_graph_latency_ms,
+                rerank_latency_ms=_rerank_latency_ms,
+                final_latency_ms=search_elapsed_seconds * 1000,
+            )
         if depth == "standard" and _std_ttl > 0:
             self._search_depth_cache[_cache_key] = (time.perf_counter(), _results)
             if len(self._search_depth_cache) > _SEARCH_DEPTH_CACHE_MAX:
@@ -2218,15 +2288,16 @@ class Memory(MemoryBase):
                 return True
         return False
 
-    def _search_vector_store(self, query, filters, limit, threshold=0.1, explain=False, show_expired=False):
+    def _search_vector_store(self, query, filters, limit, threshold=0.1, explain=False, show_expired=False, trace_stats=None):
         # Guard against None threshold (backward compat)
         if threshold is None:
             threshold = 0.1
 
+        _t0 = time.perf_counter()
+
         # Step 1: Preprocess query
         query_lemmatized = lemmatize_for_bm25(query)
         query_entities = extract_entities(query)
-
         # Step 2: Embed query
         embeddings = self.embedding_model.embed(query, "search")
 
@@ -2268,6 +2339,10 @@ class Memory(MemoryBase):
                 "score": mem.score,
                 "payload": payload,
             })
+
+        if trace_stats is not None:
+            trace_stats["candidate_count"] = len(candidates)
+            trace_stats["candidates_latency_ms"] = (time.perf_counter() - _t0) * 1000
 
         # Build decay function if enabled
         if os.environ.get("MEM0_ENABLE_DECAY", "").lower() == "true":
@@ -2322,6 +2397,7 @@ class Memory(MemoryBase):
             decay_fn=_decay_fn,
             salience_scores=_salience_scores,
             salience_rank_weight=_rank_weight,
+            trace_stats=trace_stats,
         )
 
         # Step 9: Format results
@@ -3969,6 +4045,7 @@ class AsyncMemory(MemoryBase):
         reference_date: Optional[Any] = None,
         show_expired: bool = False,
         depth: Optional[str] = None,
+        trace: bool = False,
         **kwargs,
     ):
         """
@@ -4002,10 +4079,14 @@ class AsyncMemory(MemoryBase):
             explain (bool, optional): Whether to include score_details for each result. Defaults to False.
             reference_date (Any, optional): Platform-only temporal parameter. Not supported in OSS.
             show_expired (bool, optional): Include expired memories. Defaults to False.
+            depth (str, optional): Search depth override (minimal/standard/full). Defaults to None.
+            trace (bool, optional): Return a "trace" key with the RECALL funnel
+                stage counts and latencies. Defaults to False.
 
         Returns:
             dict: A dictionary containing the search results under a "results" key.
                   Example for v1.1+: `{"results": [{"id": "...", "memory": "...", "score": 0.8, ...}]}`
+                  When trace=True, a "trace" key with per-stage count/latency is added.
 
         Raises:
             ValueError: If filters doesn't contain at least one of user_id, agent_id, run_id,
@@ -4082,19 +4163,21 @@ class AsyncMemory(MemoryBase):
             depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
         _min_ttl = int(os.environ.get("MEM0_SEARCH_CACHE_TTL", "0"))
         _std_ttl = int(os.environ.get("MEM0_SEARCH_STD_CACHE_TTL", "0"))
-        _cache_key = (query, json.dumps(effective_filters, sort_keys=True, default=str))
+        _cache_key = (query, json.dumps(effective_filters, sort_keys=True, default=str), trace)
 
         if depth == "minimal":
             if _min_ttl > 0:
                 _cached = self._search_depth_cache.get(_cache_key)
                 if _cached and (time.perf_counter() - _cached[0]) < _min_ttl:
                     return _cached[1]
-                _empty_result = {"results": []}
+            _empty_result = {"results": []}
+            if trace:
+                _empty_result["trace"] = _trace_stages(depth)
+            if _min_ttl > 0:
                 self._search_depth_cache[_cache_key] = (time.perf_counter(), _empty_result)
                 if len(self._search_depth_cache) > _SEARCH_DEPTH_CACHE_MAX:
                     self._search_depth_cache.popitem(last=False)
-                return _empty_result
-            return {"results": []}
+            return _empty_result
 
         if depth == "standard" and _std_ttl > 0:
             _cached = self._search_depth_cache.get(_cache_key)
@@ -4102,10 +4185,17 @@ class AsyncMemory(MemoryBase):
                 return _cached[1]
 
         search_start = time.perf_counter()
+        _trace_stats = {} if trace else None
         original_memories = await self._search_vector_store(
-            query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired
+            query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired,
+            trace_stats=_trace_stats,
         )
         search_elapsed_seconds = time.perf_counter() - search_start
+
+        graph_count = len(original_memories)
+        rerank_count = len(original_memories)
+        _graph_latency_ms = 0.0
+        _rerank_latency_ms = 0.0
 
         if depth == "standard":
             pass  # vector-only, no graph or rerank
@@ -4115,6 +4205,7 @@ class AsyncMemory(MemoryBase):
             # behavior) so the reranker scores them against the query — with
             # pure-Chinese relation types the fragment text matches the query
             # semantically and should survive the rerank threshold.
+            _graph_t0 = time.perf_counter()
             if self.graph:
                 try:
                     loop = asyncio.get_running_loop()
@@ -4164,8 +4255,11 @@ class AsyncMemory(MemoryBase):
                     )
                 except Exception as e:
                     logger.warning(f"Graph search failed: {e}, using vector store results only")
+            _graph_latency_ms = (time.perf_counter() - _graph_t0) * 1000
+            graph_count = len(original_memories)
 
             # Apply reranking if enabled and reranker is available (async)
+            _rerank_t0 = time.perf_counter()
             _rerank_applied = False
             if rerank and self.reranker and original_memories:
                 try:
@@ -4213,6 +4307,8 @@ class AsyncMemory(MemoryBase):
                     ),
                     reverse=True,
                 )
+            _rerank_latency_ms = (time.perf_counter() - _rerank_t0) * 1000
+            rerank_count = len(original_memories)
 
         if temporal_usage_notice:
             await display_temporal_usage_notice_async(self, "async", "search", *temporal_usage_notice)
@@ -4231,6 +4327,22 @@ class AsyncMemory(MemoryBase):
             await display_first_run_notice_async(self, "async", "search")
 
         _results = {"results": original_memories}
+        if trace:
+            _results["trace"] = _trace_stages(
+                depth,
+                candidate_count=_trace_stats.get("candidate_count", 0),
+                threshold_count=_trace_stats.get("after_threshold", 0),
+                decay_count=_trace_stats.get("after_decay", 0),
+                graph_count=graph_count,
+                rerank_count=rerank_count,
+                final_count=len(original_memories),
+                candidate_latency_ms=_trace_stats.get("candidates_latency_ms", 0.0),
+                threshold_latency_ms=_trace_stats.get("threshold_latency_ms", 0.0),
+                decay_latency_ms=_trace_stats.get("decay_latency_ms", 0.0),
+                graph_latency_ms=_graph_latency_ms,
+                rerank_latency_ms=_rerank_latency_ms,
+                final_latency_ms=search_elapsed_seconds * 1000,
+            )
         if depth == "standard" and _std_ttl > 0:
             self._search_depth_cache[_cache_key] = (time.perf_counter(), _results)
             if len(self._search_depth_cache) > _SEARCH_DEPTH_CACHE_MAX:
@@ -4341,9 +4453,11 @@ class AsyncMemory(MemoryBase):
                 return True
         return False
 
-    async def _search_vector_store(self, query, filters, limit, threshold=0.1, explain=False, show_expired=False):
+    async def _search_vector_store(self, query, filters, limit, threshold=0.1, explain=False, show_expired=False, trace_stats=None):
         if threshold is None:
             threshold = 0.1
+
+        _t0 = time.perf_counter()
 
         # Step 1: Preprocess query (CPU-bound)
         query_lemmatized = await asyncio.to_thread(lemmatize_for_bm25, query)
@@ -4390,6 +4504,10 @@ class AsyncMemory(MemoryBase):
                 "score": mem.score,
                 "payload": payload,
             })
+
+        if trace_stats is not None:
+            trace_stats["candidate_count"] = len(candidates)
+            trace_stats["candidates_latency_ms"] = (time.perf_counter() - _t0) * 1000
 
         # Build decay function if enabled
         if os.environ.get("MEM0_ENABLE_DECAY", "").lower() == "true":
@@ -4444,6 +4562,7 @@ class AsyncMemory(MemoryBase):
             decay_fn=_decay_fn,
             salience_scores=_salience_scores,
             salience_rank_weight=_rank_weight,
+            trace_stats=trace_stats,
         )
 
         # Step 9: Format results
