@@ -6,8 +6,8 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/lib/auth";
 
 export const metadata = {
-  title: "Mem0 - Log in",
-  description: "Log in to Mem0",
+  title: "登录 - Mem0",
+  description: "登录 Mem0",
 };
 
 export default function AuthLayout({
@@ -17,7 +17,7 @@ export default function AuthLayout({
 }) {
   return (
     <html
-      lang="en"
+      lang="zh-CN"
       className={cn(
         Fustat.variable,
         InterDisplay.variable,

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { format, formatDistanceToNow } from "date-fns";
+import { zhCN } from "date-fns/locale";
 import { RefreshCw } from "lucide-react";
 import {
   CartesianGrid,
@@ -45,9 +46,10 @@ const fmtCount = (n: number) => n.toLocaleString();
 const fmtPct = (fraction: number) => `${(fraction * 100).toFixed(1)}%`;
 const fmtMs = (ms: number) => `${Math.round(ms)} ms`;
 const fmtScore = (s: number) => s.toFixed(2);
-const fmtDay = (iso: string) => format(new Date(iso), "MMM d");
+const fmtDay = (iso: string) =>
+  format(new Date(iso), "MMM d", { locale: zhCN });
 const fmtDateTime = (iso: string | null | undefined) =>
-  iso ? format(new Date(iso), "MMM d, yyyy") : "--";
+  iso ? format(new Date(iso), "MMM d, yyyy", { locale: zhCN }) : "--";
 
 const memoryIdCell = (value: string) => (
   <span className="font-mono text-xs line-clamp-1">{value}</span>
@@ -97,7 +99,7 @@ function Section({
 function NoData() {
   return (
     <p className="py-4 text-center text-xs text-onSurface-default-tertiary">
-      No data yet
+      暂无数据
     </p>
   );
 }
@@ -183,14 +185,14 @@ export default function AnalyticsPage() {
       setLastUpdated(new Date().toISOString());
       return res.data;
     },
-    { errorToast: "Failed to load analytics", initialData: EMPTY_REPORT },
+    { errorToast: "加载分析数据失败", initialData: EMPTY_REPORT },
   );
 
   const { search_quality, feedback, heat, operations } = report;
 
   const searchRows = Object.entries(search_quality.windows).map(
     ([days, w]) => ({
-      window: `${days} days`,
+      window: `${days} 天`,
       total: w.total_queries ?? 0,
       zeroRate: w.zero_hit_rate ?? 0,
       avgScore: w.avg_score ?? 0,
@@ -199,57 +201,57 @@ export default function AnalyticsPage() {
   );
 
   const opRows = Object.entries(operations.windows).map(([days, w]) => ({
-    window: `${days} days`,
+    window: `${days} 天`,
     total: w.total_requests ?? 0,
     latency: w.avg_latency_ms ?? 0,
     successRate: w.success_rate ?? 0,
   }));
 
   const windowColumns = [
-    { key: "window" as const, label: "Window", width: 90 },
+    { key: "window" as const, label: "时间窗口", width: 90 },
     {
       key: "total" as const,
-      label: "Requests",
+      label: "请求数",
       width: 100,
       render: (v: number) => fmtCount(v),
     },
     {
       key: "latency" as const,
-      label: "Avg Latency",
+      label: "平均延迟",
       width: 110,
       render: (v: number) => fmtMs(v),
     },
     {
       key: "successRate" as const,
-      label: "Success Rate",
+      label: "成功率",
       width: 110,
       render: (v: number) => fmtPct(v),
     },
   ];
 
   const searchColumns = [
-    { key: "window" as const, label: "Window", width: 90 },
+    { key: "window" as const, label: "时间窗口", width: 90 },
     {
       key: "total" as const,
-      label: "Total Queries",
+      label: "总查询数",
       width: 100,
       render: (v: number) => fmtCount(v),
     },
     {
       key: "zeroRate" as const,
-      label: "Zero-hit Rate",
+      label: "零命中率",
       width: 110,
       render: (v: number) => fmtPct(v),
     },
     {
       key: "avgScore" as const,
-      label: "Avg Score",
+      label: "平均分",
       width: 90,
       render: (v: number) => fmtScore(v),
     },
     {
       key: "latency" as const,
-      label: "Avg Latency",
+      label: "平均延迟",
       width: 110,
       render: (v: number) => fmtMs(v),
     },
@@ -258,34 +260,34 @@ export default function AnalyticsPage() {
   const zeroHitColumns = [
     {
       key: "query" as const,
-      label: "Query",
+      label: "查询",
       width: 300,
       render: (v: string) => <span className="line-clamp-1">{v}</span>,
     },
-    { key: "count" as const, label: "Hits", width: 100 },
+    { key: "count" as const, label: "命中数", width: 100 },
   ];
 
   const correctedColumns = [
     {
       key: "memory_id" as const,
-      label: "Memory ID",
+      label: "记忆 ID",
       width: 300,
       render: memoryIdCell,
     },
-    { key: "count" as const, label: "Corrections", width: 100 },
+    { key: "count" as const, label: "纠正次数", width: 100 },
   ];
 
   const hotColumns = [
     {
       key: "memory_id" as const,
-      label: "Memory ID",
+      label: "记忆 ID",
       width: 300,
       render: memoryIdCell,
     },
-    { key: "access_count" as const, label: "Accesses", width: 100 },
+    { key: "access_count" as const, label: "访问次数", width: 100 },
     {
       key: "salience_score" as const,
-      label: "Salience",
+      label: "显著性",
       width: 100,
       render: (v: number) => fmtScore(v),
     },
@@ -294,14 +296,14 @@ export default function AnalyticsPage() {
   const idleColumns = [
     {
       key: "memory_id" as const,
-      label: "Memory ID",
+      label: "记忆 ID",
       width: 300,
       render: memoryIdCell,
     },
-    { key: "access_count" as const, label: "Accesses", width: 100 },
+    { key: "access_count" as const, label: "访问次数", width: 100 },
     {
       key: "last_access_at" as const,
-      label: "Last Access",
+      label: "最后访问",
       width: 140,
       render: (v: string | null) => fmtDateTime(v),
     },
@@ -310,13 +312,13 @@ export default function AnalyticsPage() {
   const boostColumns = [
     {
       key: "memory_id" as const,
-      label: "Memory ID",
+      label: "记忆 ID",
       width: 300,
       render: memoryIdCell,
     },
     {
       key: "delta" as const,
-      label: "Delta",
+      label: "增量",
       width: 100,
       render: (v: number) => (
         <span
@@ -333,7 +335,7 @@ export default function AnalyticsPage() {
     },
     {
       key: "created_at" as const,
-      label: "When",
+      label: "时间",
       width: 140,
       render: (v: string | null) => fmtDateTime(v),
     },
@@ -343,14 +345,17 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-xl font-semibold font-fustat">Analytics</h1>
+          <h1 className="text-xl font-semibold font-fustat">分析</h1>
           <p className="text-sm text-onSurface-default-secondary">
-            Search quality, feedback, and heat health across your memory store.
+            了解记忆库中的搜索质量、反馈与热度健康。
           </p>
           {lastUpdated && (
             <p className="text-xs text-onSurface-default-tertiary">
-              Last updated{" "}
-              {formatDistanceToNow(new Date(lastUpdated), { addSuffix: true })}
+              上次更新于{" "}
+              {formatDistanceToNow(new Date(lastUpdated), {
+                addSuffix: true,
+                locale: zhCN,
+              })}
             </p>
           )}
         </div>
@@ -360,7 +365,7 @@ export default function AnalyticsPage() {
           disabled={isLoading}
         >
           <RefreshCw className="size-4 mr-2" />
-          Refresh
+          刷新
         </Button>
       </div>
 
@@ -380,10 +385,10 @@ export default function AnalyticsPage() {
       ) : (
         <>
           <Panel
-            title="Search Quality"
-            description="Query volume, zero-hit rate, average score and latency over the last 7/30 days."
+            title="搜索质量"
+            description="过去 7/30 天的查询量、零命中率、平均分与延迟。"
           >
-            <Section title="Windows">
+            <Section title="时间窗口">
               {searchRows.length > 0 ? (
                 <DataTable
                   data={searchRows}
@@ -394,7 +399,7 @@ export default function AnalyticsPage() {
                 <NoData />
               )}
             </Section>
-            <Section title="Daily trend (7 days)">
+            <Section title="每日趋势（7 天）">
               {search_quality.daily_trend.length > 0 ? (
                 <div className="h-[200px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
@@ -427,7 +432,7 @@ export default function AnalyticsPage() {
                       <Line
                         type="monotone"
                         dataKey="queries"
-                        name="Queries"
+                        name="查询量"
                         stroke="#8f74e0"
                         strokeWidth={2}
                         dot={false}
@@ -435,7 +440,7 @@ export default function AnalyticsPage() {
                       <Line
                         type="monotone"
                         dataKey="zero_hits"
-                        name="Zero hits"
+                        name="零命中"
                         stroke="#f43f5e"
                         strokeWidth={2}
                         dot={false}
@@ -447,7 +452,7 @@ export default function AnalyticsPage() {
                 <NoData />
               )}
             </Section>
-            <Section title="Top zero-hit queries">
+            <Section title="零命中热门查询">
               {search_quality.top_zero_hits.length > 0 ? (
                 <DataTable
                   data={search_quality.top_zero_hits}
@@ -461,31 +466,31 @@ export default function AnalyticsPage() {
           </Panel>
 
           <Panel
-            title="Feedback Loop"
-            description="How users rate and correct retrieved memories."
+            title="反馈回路"
+            description="用户如何评价与纠正检索到的记忆。"
           >
-            <Section title="Feedback distribution">
+            <Section title="反馈分布">
               <DistributionBars
                 items={[
                   {
-                    label: "Useful",
+                    label: "有用",
                     value: feedback.type_distribution.useful,
                     barClass: "bg-emerald-500",
                   },
                   {
-                    label: "Useless",
+                    label: "无用",
                     value: feedback.type_distribution.useless,
                     barClass: "bg-rose-500",
                   },
                   {
-                    label: "Correction",
+                    label: "纠正",
                     value: feedback.type_distribution.correction,
                     barClass: "bg-amber-500",
                   },
                 ]}
               />
             </Section>
-            <Section title="Most corrected memories">
+            <Section title="纠正最多的记忆">
               {feedback.most_corrected.length > 0 ? (
                 <DataTable
                   data={feedback.most_corrected}
@@ -499,10 +504,10 @@ export default function AnalyticsPage() {
           </Panel>
 
           <Panel
-            title="Heat Health"
-            description="Salience score distribution and the hot, idle, and boosted memories."
+            title="热度健康"
+            description="显著性评分分布，以及热门、闲置与提升记忆。"
           >
-            <Section title="Score distribution">
+            <Section title="评分分布">
               <ScoreHistogram
                 buckets={[
                   { label: "< 0.5", value: heat.score_distribution["lt_0.5"] },
@@ -518,7 +523,7 @@ export default function AnalyticsPage() {
                 ]}
               />
             </Section>
-            <Section title="High-frequency memories">
+            <Section title="高频记忆">
               {heat.high_frequency.length > 0 ? (
                 <DataTable
                   data={heat.high_frequency}
@@ -529,7 +534,7 @@ export default function AnalyticsPage() {
                 <NoData />
               )}
             </Section>
-            <Section title="Idle memories (not recalled in 14+ days)">
+            <Section title="闲置记忆（14 天以上未召回）">
               {heat.stale.length > 0 ? (
                 <DataTable
                   data={heat.stale}
@@ -540,7 +545,7 @@ export default function AnalyticsPage() {
                 <NoData />
               )}
             </Section>
-            <Section title="Boost records">
+            <Section title="提升记录">
               {heat.boost_adjustments.length > 0 ? (
                 <DataTable
                   data={heat.boost_adjustments}
@@ -554,10 +559,10 @@ export default function AnalyticsPage() {
           </Panel>
 
           <Panel
-            title="Operations"
-            description="Request volume, latency and success rate over the last 7/30 days."
+            title="操作"
+            description="过去 7/30 天的请求量、延迟与成功率。"
           >
-            <Section title="Windows">
+            <Section title="时间窗口">
               {opRows.length > 0 ? (
                 <DataTable
                   data={opRows}
