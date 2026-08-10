@@ -310,12 +310,29 @@ curl -s http://<llm-host>/v1/chat/completions \
 | `MEMORY_RETENTION_DAYS` | `0` | 超期记忆删除天数（0 = 仅清除设了 expiration_date 的记忆） |
 | `PRUNE_DRY_RUN` | `false` | `true` 时只报告不删除 |
 
-### 定期合并
+### 语义去重
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `CONSOLIDATION_DRY_RUN` | `false` | `true` 时只报告不合并 |
-| `CONSOLIDATION_MIN_GROUP` | `3` | 触发合并的最小记忆条数 |
+| `DEDUP_SIMILARITY_THRESHOLD` | `0.85` | 向量粗筛 cosine 阈值 |
+| `DEDUP_MIN_JACCARD` | `0.2` | 字符 Jaccard 预筛阈值 |
+| `DEDUP_DRY_RUN` | `false` | `true` 时只报告不去重 |
+
+### 进化循环
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `EVOLVE_BOOST_MIN_ACCESS` | `5` | 高频提权触发的最小 access_count |
+| `EVOLVE_BOOST_MAX_SCORE` | `1.5` | salience 提权上限 |
+| `EVOLVE_IDLE_DAYS` | `14` | 未召回清单的闲置天数 |
+| `EVOLVE_ZERO_HIT_HOURS` | `24` | 零命中统计窗口（小时） |
+| `EVOLVE_DRY_RUN` | `false` | `true` 时只报告不提权 |
+
+### 反馈闭环与热度
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_EVOLVE_RANK_WEIGHT` | `0` | 热度排序加成权重（>0 生效，建议 0.1-0.3 起步） |
 
 示例 `.env` 配置：
 
@@ -391,28 +408,42 @@ docker exec -it mem0-mem0-1 python3 /app/scripts/reset_admin_password.py
 docker exec -it mem0-mem0-1 python3 /app/scripts/prune_request_logs.py
 ```
 
-## 记忆清理
+### 记忆清理
 
 过期记忆和 FalkorDB 孤立节点自动清理（每日凌晨 4:00 由 cron 触发）。也可手动执行：
 
 ```bash
 # 干跑（只报告不删除）
-docker exec -e PRUNE_DRY_RUN=true -e MEM0_CONFIG_PATH=/app/config.json -e MEMORY_RETENTION_DAYS=180 mem0-dev-mem0-1 python3 /app/prune_expired_memories.py
+docker exec -e PRUNE_DRY_RUN=true -e MEM0_CONFIG_PATH=/app/config.json -e MEMORY_RETENTION_DAYS=180 mem0-dev-mem0-1 python3 /app/scripts/prune_expired_memories.py
 
 # 实际执行
-docker exec -e MEM0_CONFIG_PATH=/app/config.json -e MEMORY_RETENTION_DAYS=180 mem0-dev-mem0-1 python3 /app/prune_expired_memories.py
+docker exec -e MEM0_CONFIG_PATH=/app/config.json -e MEMORY_RETENTION_DAYS=180 mem0-dev-mem0-1 python3 /app/scripts/prune_expired_memories.py
 ```
 
-## 记忆合并
+### 语义去重
 
-碎片记忆按实体分组，≥3 条时自动合并为精简事实（每日凌晨 5:00 由 cron 触发）。手动执行：
+近重复记忆自动合并（每日凌晨 5:00 由 cron 触发）。三层判定：向量粗筛 → 字符 Jaccard → LLM 二元确认。手动执行：
 
 ```bash
 # 干跑
-docker exec -e CONSOLIDATION_DRY_RUN=true -e MEM0_CONFIG_PATH=/app/config.json mem0-dev-mem0-1 python3 /app/consolidate_memories.py
+docker exec -e DEDUP_DRY_RUN=true -e MEM0_CONFIG_PATH=/app/config.json mem0-dev-mem0-1 python3 /app/scripts/dedup_memories.py
 
 # 实际执行
-docker exec -e MEM0_CONFIG_PATH=/app/config.json mem0-dev-mem0-1 python3 /app/consolidate_memories.py
+docker exec -e MEM0_CONFIG_PATH=/app/config.json mem0-dev-mem0-1 python3 /app/scripts/dedup_memories.py
+```
+
+> ⚠️ `consolidate_memories.py`（旧版碎片合并）已弃用——曾因 fallback 把全部记忆压成 3 条导致信息丢失。请使用 `dedup_memories.py`（只合并近重复、不压缩内容）。
+
+### 进化循环
+
+高频记忆自动提权 + 零命中统计 + 未召回清单（每日凌晨 6:00 由 cron 触发）。手动执行：
+
+```bash
+# 干跑
+docker exec -e EVOLVE_DRY_RUN=true mem0-dev-mem0-1 python3 /app/scripts/evolve_cycle.py
+
+# 实际执行
+docker exec mem0-dev-mem0-1 python3 /app/scripts/evolve_cycle.py
 ```
 
 ## 矛盾检测
@@ -420,11 +451,11 @@ docker exec -e MEM0_CONFIG_PATH=/app/config.json mem0-dev-mem0-1 python3 /app/co
 写入时实时判定，复用 LLM 提取调用。默认关闭，开启方式：
 
 ```bash
-# 在 .env 中添加
-echo "MEM0_ENABLE_CONTRADICTION=true" >> /data/mem0-push/server/.env
+# 在 server/.env 中添加
+echo "MEM0_ENABLE_CONTRADICTION=true" >> /data/mem0_falkordb/server/.env
 
-# 重建容器生效
-cd /data/mem0-push/server && docker compose up -d --force-recreate mem0
+# 重建容器生效（.env 变更需重建，restart 不生效）
+cd /data/mem0_falkordb/server && docker compose up -d --force-recreate mem0
 ```
 
 开启后，Agent 写入记忆时发现矛盾（如先存"喜欢咖啡"后说"讨厌咖啡"）→ 自动 DELETE 旧记忆。所有变更记录在 history 表可追溯。
@@ -534,6 +565,7 @@ LLM 未输出 `importance` 时按关键词自动判断（Phase 2.6，sync/async 
 - **Requests** — API 调用审计日志
 - **Memories** — 浏览和搜索记忆
 - **Entities** — 用户/Agent/会话列表及计数
+- **Analytics** — 五个真实数据面板（中文）：搜索质量 / 反馈闭环 / 热度健康 / 操作概览 / 召回漏斗；未召回清单可直接点「清理/保留」决策
 - **API Keys** — 创建和管理 API Key
 - **Configuration** — 查看当前 Provider 配置
 - **Settings** — 修改密码和个人信息
