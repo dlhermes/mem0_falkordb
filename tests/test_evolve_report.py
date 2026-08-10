@@ -253,3 +253,49 @@ def test_days_param_narrows_windows(client):
 def test_invalid_days_rejected(client):
     assert _get(client, days=0).status_code == 422
     assert _get(client, days=91).status_code == 422
+
+
+class _FakeTrendResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _DateKeySession:
+    """Delegates to a real session, but returns the daily_trend aggregation
+    (first query) with ``datetime.date`` keys, simulating PostgreSQL where
+    ``func.date()`` yields a date object instead of sqlite's string."""
+
+    def __init__(self, real, trend_rows):
+        self._real = real
+        self._trend_rows = trend_rows
+        self._first = True
+
+    def execute(self, stmt, *args, **kwargs):
+        if self._first:
+            self._first = False
+            return _FakeTrendResult(self._trend_rows)
+        return self._real.execute(stmt, *args, **kwargs)
+
+
+def test_daily_trend_matches_date_object_keys(client):
+    now = _now()
+    today = now.date()
+    two_days_ago = today - timedelta(days=2)
+    trend_rows = [
+        (today, 3, 0.6, 1),
+        (two_days_ago, 2, 0.8, 0),
+    ]
+    with client[1]() as real:
+        report = evolve_router.evolve_report(
+            _auth=None, db=_DateKeySession(real, trend_rows), days=7
+        )
+
+    trend = {day["date"]: day for day in report["search_quality"]["daily_trend"]}
+    assert trend[today.isoformat()]["queries"] == 3
+    assert trend[today.isoformat()]["avg_score"] == pytest.approx(0.6)
+    assert trend[today.isoformat()]["zero_hits"] == 1
+    assert trend[two_days_ago.isoformat()]["queries"] == 2
+    assert trend[two_days_ago.isoformat()]["avg_score"] == pytest.approx(0.8)

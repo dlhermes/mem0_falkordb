@@ -130,7 +130,10 @@ def evolve_report(
         .group_by("day")
         .order_by("day")
     ).all()
-    trend_by_day = {row[0]: row for row in trend_rows}
+    trend_by_day = {
+        (row[0].isoformat() if hasattr(row[0], "isoformat") else str(row[0])): row
+        for row in trend_rows
+    }
     today = now.date()
     daily_trend = []
     for offset in range(trend_days - 1, -1, -1):
