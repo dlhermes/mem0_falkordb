@@ -28,6 +28,7 @@ from rate_limit import limiter
 from routers import api_keys as api_keys_router
 from routers import auth as auth_router
 from routers import entities as entities_router
+from routers import evolve as evolve_router
 from routers import requests as requests_router
 from schemas import MessageResponse
 from server_state import (
@@ -236,6 +237,7 @@ def _on_startup() -> None:
 app.include_router(auth_router.router)
 app.include_router(api_keys_router.router)
 app.include_router(entities_router.router)
+app.include_router(evolve_router.router)
 app.include_router(requests_router.router)
 
 
@@ -565,10 +567,10 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
 def update_memory(memory_id: str, updated_memory: MemoryUpdate, _auth=Depends(verify_auth)):
     """Update an existing memory."""
     try:
-        fields_set = getattr(updated_memory, "model_fields_set", getattr(updated_memory, "__fields_set__", set()))
-        params = {"memory_id": memory_id}
+        fields_set = getattr(updated_memory, "model_fields_set", None) or set()
+        params: dict[str, Any] = {"memory_id": memory_id}
         if "text" in fields_set:
-            params["data"] = updated_memory.text
+            params["text"] = updated_memory.text
         if "metadata" in fields_set:
             params["metadata"] = updated_memory.metadata
         if "expiration_date" in fields_set:

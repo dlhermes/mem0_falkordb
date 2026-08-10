@@ -545,11 +545,12 @@ class TestUpdateMemory:
     """Verify that PUT /memories/{id} extracts text and metadata from the
     request body and forwards them correctly to Memory.update()."""
 
-    def test_text_forwarded_as_data(self, client, mock_memory):
+    def test_text_forwarded_as_text(self, client, mock_memory):
         resp = client.put("/memories/mem-1", json={"text": "Likes tennis"})
         assert resp.status_code == 200
         _, kwargs = mock_memory.update.call_args
-        assert kwargs["data"] == "Likes tennis"
+        assert kwargs["text"] == "Likes tennis"
+        assert "data" not in kwargs
 
     def test_metadata_forwarded(self, client, mock_memory):
         resp = client.put("/memories/mem-1", json={
@@ -580,11 +581,17 @@ class TestUpdateMemory:
         assert kwargs["expiration_date"] is None
 
     def test_dict_not_passed_as_data(self, client, mock_memory):
-        """Regression test for #3933: the entire dict must NOT be passed as data."""
+        """Regression test for #3933: the entire dict must NOT be passed as data.
+
+        The server now forwards the text field as ``text=`` (the ``data=`` alias
+        is deprecated in Memory.update()); the forwarded value must be the plain
+        string, not the whole request dict.
+        """
         resp = client.put("/memories/mem-1", json={"text": "updated content"})
         assert resp.status_code == 200
         _, kwargs = mock_memory.update.call_args
-        assert isinstance(kwargs["data"], str)
+        assert isinstance(kwargs["text"], str)
+        assert "data" not in kwargs
 
 
 class TestUpdateOpenAPISchema:

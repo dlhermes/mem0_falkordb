@@ -150,3 +150,8 @@ cython_debug/
 # Hermes Agent local state
 .hermes/
 .codegraph/
+
+# AI code intelligence tool outputs
+graphify-out/
+.code-review-graph/
+docs/evolve-observability-plan.md

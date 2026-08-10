@@ -72,3 +72,41 @@ class Settings(Base):
         default=_utcnow,
         onupdate=_utcnow,
     )
+
+
+class EvolveFeedback(Base):
+    __tablename__ = "evolve_feedback"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_new_uuid)
+    memory_id: Mapped[str] = mapped_column(String(255), index=True)
+    feedback_type: Mapped[str] = mapped_column(String(16))
+    source: Mapped[str] = mapped_column(String(16), default="manual")
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class EvolveSalience(Base):
+    __tablename__ = "evolve_salience"
+
+    memory_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    salience_score: Mapped[float] = mapped_column(Float, default=1.0)
+    access_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_access_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utcnow,
+        onupdate=_utcnow,
+    )
+
+
+class EvolveSalienceAdjustment(Base):
+    __tablename__ = "evolve_salience_adjustments"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_new_uuid)
+    memory_id: Mapped[str] = mapped_column(String(255), index=True)
+    delta: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(String(64))
+    feedback_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("evolve_feedback.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

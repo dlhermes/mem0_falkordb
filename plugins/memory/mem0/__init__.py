@@ -77,6 +77,9 @@ _CLIENT_ERROR_TYPES = ("MemoryNotFoundError", "ValidationError")
 # through instead of silently overriding them with the placeholder.
 _DEFAULT_USER_ID = "hermes-user"
 
+# Feedback notes carry a text summary; trim to keep the payload small.
+_FEEDBACK_NOTE_MAX_CHARS = 200
+
 
 def _is_client_error(exc: Exception) -> bool:
     """True for user-caused errors (bad ID, not found) that should NOT trip circuit breaker."""
@@ -800,6 +803,9 @@ class Mem0MemoryProvider(MemoryProvider):
             try:
                 result = self._backend.update(memory_id, text)
                 self._record_success()
+                # A correction replaces a stored fact — report it so the evolve
+                # loop can adjust salience. Best-effort; never affects the result.
+                self._report_feedback("correction", memory_id, note=text)
                 return json.dumps(result)
             except Exception as e:
                 if _is_client_error(e):
@@ -814,6 +820,9 @@ class Mem0MemoryProvider(MemoryProvider):
             try:
                 result = self._backend.delete(memory_id)
                 self._record_success()
+                # Deleting a memory the user no longer wants surfaces useless
+                # feedback for the evolve loop. Best-effort; never affects the result.
+                self._report_feedback("useless", memory_id)
                 return json.dumps(result)
             except Exception as e:
                 if _is_client_error(e):
@@ -822,6 +831,22 @@ class Mem0MemoryProvider(MemoryProvider):
                 return tool_error(self._format_error("Delete failed", e))
 
         return tool_error(f"Unknown tool: {tool_name}")
+
+    def _report_feedback(self, feedback_type: str, memory_id: str, note: str | None = None) -> None:
+        """Best-effort report of explicit user feedback on a memory to the server's evolve loop.
+
+        Never raises: a failed report must not break the tool call that just
+        succeeded. The backend no-ops when it has no feedback endpoint
+        (platform cloud / local OSS Memory).
+        """
+        if self._backend is None:
+            return
+        try:
+            if note and len(note) > _FEEDBACK_NOTE_MAX_CHARS:
+                note = note[:_FEEDBACK_NOTE_MAX_CHARS] + "…"
+            self._backend.report_feedback(memory_id, feedback_type, source="auto", note=note)
+        except Exception as e:
+            logger.debug("Mem0 feedback report skipped (%s, memory=%s): %s", feedback_type, memory_id, e)
 
     def _shutdown_backend(self):
         # atexit 兜底：先冲刷合并缓冲再关闭后端，保证记忆不丢失

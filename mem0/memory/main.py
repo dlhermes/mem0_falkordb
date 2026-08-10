@@ -629,9 +629,7 @@ def resolve_search_depth(query: str, db_conn=None) -> str:
                     matched.add(category)
                 elif match_type == "contains" and keyword in stripped:
                     matched.add(category)
-            # Priority: correction > full > standard > minimal
-            if "correction" in matched:
-                return "full"
+            # Priority: full > standard > minimal
             if "full" in matched:
                 return "full"
             if "standard" in matched:
@@ -1985,21 +1983,6 @@ class Memory(MemoryBase):
                     self._search_depth_cache.popitem(last=False)
                 return _empty_result
             return {"results": []}
-
-        # Correction mode: detect user correction signals, widen search
-        if self.config.correction_mode or os.environ.get("MEM0_CORRECTION_MODE", "false").lower() == "true":
-            try:
-                cur = self.db.connection.execute(
-                    "SELECT keyword FROM search_keywords WHERE category='correction' AND match_type='contains'"
-                )
-                for (kw,) in cur.fetchall():
-                    if kw.lower() in query.lower():
-                        threshold = min(threshold, float(os.environ.get("MEM0_CORRECTION_THRESHOLD", "0.1")))
-                        limit = max(limit, int(os.environ.get("MEM0_CORRECTION_TOP_K", "30")))
-                        depth = "full"
-                        break
-            except Exception:
-                pass
 
         if depth == "standard" and _std_ttl > 0:
             _cached = self._search_depth_cache.get(_cache_key)
@@ -4095,21 +4078,6 @@ class AsyncMemory(MemoryBase):
                     self._search_depth_cache.popitem(last=False)
                 return _empty_result
             return {"results": []}
-
-        # Correction mode: detect user correction signals, widen search
-        if self.config.correction_mode or os.environ.get("MEM0_CORRECTION_MODE", "false").lower() == "true":
-            try:
-                cur = self.db.connection.execute(
-                    "SELECT keyword FROM search_keywords WHERE category='correction' AND match_type='contains'"
-                )
-                for (kw,) in cur.fetchall():
-                    if kw.lower() in query.lower():
-                        threshold = min(threshold, float(os.environ.get("MEM0_CORRECTION_THRESHOLD", "0.1")))
-                        limit = max(limit, int(os.environ.get("MEM0_CORRECTION_TOP_K", "30")))
-                        depth = "full"
-                        break
-            except Exception:
-                pass
 
         if depth == "standard" and _std_ttl > 0:
             _cached = self._search_depth_cache.get(_cache_key)

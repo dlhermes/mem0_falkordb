@@ -23,7 +23,7 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **pgvector 维度** | 硬编码 1536 | ✅ 自动检测（切换 Embedder 模型自适应） |
 | **Provider 配置** | 需调 `/configure` API | ✅ `MEM0_CONFIG_PATH=/app/config.json` 即可 |
 | **生产部署** | 需手动注册 admin | ✅ 启动自动创建 admin@mem0.dev |
-| **性能调优** | 硬编码或不可配 | ✅ 41 个环境变量全覆盖（连接池/HTTP超时/批量/并发/衰减/清理/纠正/深度路由） |
+| **性能调优** | 硬编码或不可配 | ✅ 41 个环境变量全覆盖（连接池/HTTP超时/批量/并发/衰减/清理/反馈/深度路由） |
 | **Docker 开箱** | 依赖手动安装系统包 | ✅ Dockerfile 预装 libpq5 |
 | **长消息内存** | 超长消息一次性传入 | ✅ `MEM0_LLM_MAX_INPUT_TOKENS` 自动分块提取 |
 | **Reranker 重排序** | SDK 有、Server API 未启用 | ✅ Server `/search` API 支持 rerank 参数，配置后自动生效 |
@@ -37,7 +37,7 @@ mem0 OSS v2.0.0 移除了外部图数据库支持。`mem0/graphs/` 整个模块�
 | **定期合并** | ❌ 无 | ✅ cron 按实体分组，LLM 合并 3+ 碎片为精炼事实 |
 | **矛盾检测** | ❌ 无 | ✅ `MEM0_ENABLE_CONTRADICTION=true` 启用，写入时实时判定矛盾，自动 DELETE 旧记忆 |
 | **搜索深度路由** | ❌ 无 | ✅ 三级深度（minimal/standard/full），自动识别废话跳过检索，降本 40-60%。`MEM0_SEARCH_DEPTH_DEFAULT=full` 确保零行为变化 |
-| **用户纠正感知** | ❌ 无 | ✅ 检测"不对/记错了"等纠正信号→自动降 threshold、扩 top_k、强制 full depth。Agent 能自我纠正 |
+| **显式反馈闭环** | ❌ 无 | ✅ 对话层捕获用户纠正信号→`POST /evolve/feedback` 调整记忆热度分（useful +0.1 / useless -0.15 / correction -0.05，clamp [0.05,1.0]），只改热度不改内容，记忆越用越准 |
 | **图记忆时效** | 冲突消解物理删除（误判=永久丢失） | ✅ 冲突改为失效保留（`invalidated_at` 标记），检索默认只出有效事实，同事实重现自动复活，误判可恢复 |
 
 ## 架构
@@ -385,25 +385,9 @@ MEM0_ENABLE_DECAY=true              # 启用衰减（默认关）
 MEM0_DECAY_HALF_LIFE_DAYS=30        # 基准半衰期
 ```
 
-### 用户纠正感知
+### 显式反馈闭环
 
-用户说"不对/记错了/应该是"等纠正信号时，搜索自动放宽参数让旧记忆进入候选，Agent 能自我纠正：
-
-```
-search("不对，发哥喜欢喝咖啡")
-  → 命中 correction 关键词（27条种子词）
-  → threshold 降至 0.1（默认0.3）
-  → top_k 扩至 30（默认10-20）
-  → depth=full（强制全套检索）
-```
-
-配置：
-
-```yaml
-MEM0_CORRECTION_MODE=true           # 启用纠正感知（默认关）
-MEM0_CORRECTION_THRESHOLD=0.1       # 放宽后的相似度阈值
-MEM0_CORRECTION_TOP_K=30            # 放宽后返回数量上限
-```
+记忆系统支持**显式反馈闭环**：对话层捕获用户纠正信号后，通过 `POST /evolve/feedback` 直接调整对应记忆的热度（salience）分（useful +0.1 / useless -0.15 / correction -0.05，clamp 到 [0.05, 1.0]），只改热度不改记忆内容。反馈可审计（evolve_feedback / evolve_salience_adjustments 落库），误报可逆。详见 `docs/evolve-observability-plan.md`。
 
 ### cron 过期清理
 
@@ -469,7 +453,7 @@ MEM0_SEARCH_CACHE_TTL=15            # minimal 路径 LRU 缓存 TTL 秒
 MEM0_SEARCH_STD_CACHE_TTL=5         # standard 路径 LRU 缓存 TTL 秒
 ```
 
-种子词表通过迁移 `mem0/migrations/_002_search_keywords.py` 初始化（含中英文 ~140 条，分 minimal/standard/full/correction 四类）。增删词直接操作 `search_keywords` 表，无需重启服务。`depth` 参数也暴露在 `SearchRequest` API 和 SDK `SearchMemoryOptions` 中，外部调用可显式指定。
+种子词表通过迁移 `mem0/migrations/_002_search_keywords.py` 初始化（含中英文，分 minimal/standard/full 三类）。增删词直接操作 `search_keywords` 表，无需重启服务。`depth` 参数也暴露在 `SearchRequest` API 和 SDK `SearchMemoryOptions` 中，外部调用可显式指定。
 
 ## Hermes 集成兼容性
 

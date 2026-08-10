@@ -1,5 +1,11 @@
 """Consolidate related memories by entity group.
 
+DEPRECATED (2026-08-09): 本脚本已弃用，请使用 dedup_memories.py。
+原因：fallback 模式把用户全部记忆当一个组做 LLM 压缩合并后删除旧记忆，
+曾导致生产记忆从几十条被压至 3 条（信息丢失）。新方案只做语义去重
+（合并近重复、不压缩），见 dedup_memories.py。
+保留本文件仅为历史参考，cron 已切换至 dedup_memories.py，勿再使用。
+
 Scans users, groups memories by FalkorDB entity, merges groups with 3+
 related items into concise summaries. Adds new memories first, then
 deletes old ones (crash-safe ordering).
@@ -96,7 +102,7 @@ def merge_group(memory, entity: str, mems: list[dict], dry_run: bool) -> tuple[i
 """
 
     try:
-        response = memory.llm.generate_response(prompt)
+        response = memory.llm.generate_response([{"role": "user", "content": prompt}])
     except Exception as e:
         logger.warning("LLM merge failed for '%s': %s", entity[:30], e)
         return 0, 0
@@ -119,11 +125,12 @@ def merge_group(memory, entity: str, mems: list[dict], dry_run: bool) -> tuple[i
         return len(texts), len(merged)
 
     # Step 1: add merged memories first
-    user_id = mems[0].get("user_id")
+    user_id = mems[0].get("user_id") or "hermes-user"
+    agent_id = mems[0].get("agent_id") or "hermes"
     new_ids = []
     for t in merged:
         try:
-            r = memory.add(t, user_id=user_id)
+            r = memory.add(t, user_id=user_id, agent_id=agent_id, infer=False)
             for item in r.get("results", []):
                 if item.get("id"):
                     new_ids.append(item["id"])

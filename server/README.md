@@ -517,13 +517,9 @@ LLM 未输出 `importance` 时按关键词自动判断（Phase 2.6，sync/async 
 - **排序**：统一按 `rerank_score` 降序，图碎片与向量结果交错排列，分数高者在前；同分时前缀命中碎片优先
 - 拼句优先用中文关系名（`relation_cn` 属性，如「部署于」），无则回退 `- {type} ->` 格式
 
-## 用户纠正感知
+## 显式反馈闭环
 
-`MEM0_CORRECTION_MODE=true` 启用（默认关）。搜索时检测纠正关键词（27条种子词，来自 `search_keywords` 表），命中后自动放宽参数：
-
-- threshold → 0.1（默认 0.3）
-- top_k → 30（默认 10-20）
-- depth → full（强制全套检索）
+记忆系统支持**显式反馈闭环**：对话层捕获用户纠正信号后，通过 `POST /evolve/feedback` 直接调整对应记忆的热度（salience）分（useful +0.1 / useless -0.15 / correction -0.05，clamp 到 [0.05, 1.0]），只改热度不改记忆内容。反馈可审计（evolve_feedback / evolve_salience_adjustments 落库），误报可逆。详见 `docs/evolve-observability-plan.md`。
 
 ## 本地访问地址
 

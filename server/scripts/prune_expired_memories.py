@@ -91,25 +91,29 @@ def delete_expired_memories(memory, user_id: str, retention_days: int, dry_run: 
 def cleanup_orphans(memory, user_id: str, dry_run: bool) -> int:
     """Delete orphaned FalkorDB nodes (zero relationships)."""
     graph = getattr(memory, "graph", None)
-    if not graph or not hasattr(graph, "query"):
+    if not graph:
         return 0
+    wrapper = getattr(graph, "graph", None)
+    if not wrapper or not hasattr(wrapper, "query"):
+        return 0
+    node_label = graph.node_label or ":`__Entity__`"
+    match_clause = f"MATCH (n {node_label}) WHERE NOT (n)--()"
 
     try:
         if dry_run:
-            result = graph.query(
-                "MATCH (n:Entity {user_id: $uid}) WHERE size((n)--()) = 0 RETURN count(n) AS cnt",
-                {"uid": user_id},
+            result = wrapper.query(
+                f"{match_clause} RETURN count(n) AS cnt", user_id=user_id
             )
-            cnt = result[0][0] if result and result[0] else 0
+            cnt = result[0]["cnt"] if result else 0
             if cnt:
                 logger.info("[DRY_RUN] %s orphan nodes for %s", cnt, user_id)
             return cnt
         else:
-            result = graph.query(
-                "MATCH (n:Entity {user_id: $uid}) WHERE size((n)--()) = 0 DETACH DELETE n RETURN count(n) AS cnt",
-                {"uid": user_id},
+            result = wrapper.query(
+                f"{match_clause} DETACH DELETE n RETURN count(n) AS cnt",
+                user_id=user_id,
             )
-            cnt = result[0][0] if result and result[0] else 0
+            cnt = result[0]["cnt"] if result else 0
             if cnt:
                 logger.info("deleted %s orphan nodes for %s", cnt, user_id)
             return cnt

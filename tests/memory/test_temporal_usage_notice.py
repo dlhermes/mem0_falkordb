@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,9 +10,11 @@ from mem0.memory.main import AsyncMemory, Memory
 
 def make_sync_memory():
     memory = Memory.__new__(Memory)
-    memory.config = SimpleNamespace(llm=SimpleNamespace(config={}))
+    memory.config = SimpleNamespace(llm=SimpleNamespace(config={}), enable_search_depth=False, enable_lane=False)
     memory.api_version = "v1.1"
     memory.reranker = None
+    memory.graph = None
+    memory._search_depth_cache = OrderedDict()
     memory._add_to_vector_store = MagicMock(return_value=[])
     memory._search_vector_store = MagicMock(return_value=[])
     return memory
@@ -19,9 +22,11 @@ def make_sync_memory():
 
 def make_async_memory():
     memory = AsyncMemory.__new__(AsyncMemory)
-    memory.config = SimpleNamespace(llm=SimpleNamespace(config={}))
+    memory.config = SimpleNamespace(llm=SimpleNamespace(config={}), enable_search_depth=False, enable_lane=False)
     memory.api_version = "v1.1"
     memory.reranker = None
+    memory.graph = None
+    memory._search_depth_cache = OrderedDict()
     memory._add_to_vector_store = AsyncMock(return_value=[])
     memory._search_vector_store = AsyncMock(return_value=[])
     return memory

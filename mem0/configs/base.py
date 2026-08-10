@@ -92,10 +92,6 @@ class MemoryConfig(BaseModel):
         description="Enable lane-based decay multiplier",
         default=False,
     )
-    correction_mode: bool = Field(
-        description="Enable user correction detection in search — lowers threshold and expands top_k when query matches correction keywords",
-        default=False,
-    )
     rerank_score_threshold: float = Field(
         description="Minimum rerank_score to include in results (0 = no filter). Only applies when rerank is enabled.",
         default=0.0,

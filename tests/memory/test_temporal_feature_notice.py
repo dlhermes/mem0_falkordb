@@ -1,7 +1,18 @@
 import pytest
 
+from collections import OrderedDict
+from types import SimpleNamespace
+
 from mem0.memory import main as memory_main
 from mem0.memory.main import AsyncMemory, Memory
+
+
+def make_memory():
+    memory = Memory.__new__(Memory)
+    memory.config = SimpleNamespace(llm=SimpleNamespace(config={}), enable_search_depth=False, enable_lane=False)
+    memory.graph = None
+    memory._search_depth_cache = OrderedDict()
+    return memory
 
 
 def test_sync_add_timestamp_raises_before_validation(monkeypatch):
@@ -78,7 +89,7 @@ def test_sync_add_without_timestamp_does_not_call_temporal_feature_notice(monkey
     )
 
     with pytest.raises(Exception, match="At least one of 'user_id', 'agent_id', or 'run_id'"):
-        Memory.add(Memory.__new__(Memory), "hello")
+        Memory.add(make_memory(), "hello")
 
     assert get_error is None
 
@@ -91,6 +102,6 @@ def test_sync_search_without_reference_date_does_not_call_temporal_feature_notic
     )
 
     with pytest.raises(ValueError, match="filters must contain"):
-        Memory.search(Memory.__new__(Memory), "hello")
+        Memory.search(make_memory(), "hello")
 
     assert get_error is None

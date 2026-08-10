@@ -1,4 +1,5 @@
 import asyncio
+from collections import OrderedDict
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -267,7 +268,9 @@ def test_public_add_succeeds_when_first_run_flag_eval_fails(notice_harness):
     _, telemetry = notice_harness
     telemetry.posthog.evaluate_flags.side_effect = RuntimeError("network unavailable")
     memory = Memory.__new__(Memory)
-    memory.config = SimpleNamespace(llm=SimpleNamespace(config={}))
+    memory.config = SimpleNamespace(llm=SimpleNamespace(config={}), enable_search_depth=False, enable_lane=False)
+    memory.graph = None
+    memory._search_depth_cache = OrderedDict()
     memory._add_to_vector_store = MagicMock(return_value=[{"event": "ADD", "memory": "likes tea"}])
 
     result = Memory.add(memory, "The user likes tea.", user_id="u1", infer=False)
@@ -280,8 +283,11 @@ def test_public_search_succeeds_when_first_run_flag_eval_fails(notice_harness, m
     telemetry.posthog.evaluate_flags.side_effect = RuntimeError("network unavailable")
     monkeypatch.setattr(memory_main, "capture_event", MagicMock())
     memory = Memory.__new__(Memory)
+    memory.config = SimpleNamespace(llm=SimpleNamespace(config={}), enable_search_depth=False, enable_lane=False)
     memory.api_version = "v1.1"
     memory.reranker = None
+    memory.graph = None
+    memory._search_depth_cache = OrderedDict()
     memory._search_vector_store = MagicMock(return_value=[{"memory": "likes tea"}])
 
     result = Memory.search(memory, "favorite drink", filters={"user_id": "u1"})
@@ -1508,8 +1514,11 @@ def test_notice_priority_temporal_usage_beats_scale_and_first_run(monkeypatch):
     from mem0.memory import main as memory_main
 
     memory = memory_main.Memory.__new__(memory_main.Memory)
+    memory.config = SimpleNamespace(llm=SimpleNamespace(config={}), enable_search_depth=False, enable_lane=False)
     memory.api_version = "v1.1"
     memory.reranker = None
+    memory.graph = None
+    memory._search_depth_cache = OrderedDict()
     memory._search_vector_store = MagicMock(return_value=[])
     calls = []
 
@@ -1532,8 +1541,11 @@ def test_notice_priority_scale_beats_first_run(monkeypatch):
     from mem0.memory import main as memory_main
 
     memory = memory_main.Memory.__new__(memory_main.Memory)
+    memory.config = SimpleNamespace(llm=SimpleNamespace(config={}), enable_search_depth=False, enable_lane=False)
     memory.api_version = "v1.1"
     memory.reranker = None
+    memory.graph = None
+    memory._search_depth_cache = OrderedDict()
     memory._search_vector_store = MagicMock(return_value=[])
     calls = []
 

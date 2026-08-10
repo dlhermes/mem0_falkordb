@@ -33,6 +33,20 @@ class Mem0Backend(ABC):
     def delete(self, memory_id: str) -> dict:
         ...
 
+    def report_feedback(
+        self,
+        memory_id: str,
+        feedback_type: str,
+        source: str = "auto",
+        note: str | None = None,
+    ) -> None:
+        """Best-effort feedback report to the server's evolve loop.
+
+        No-op for backends that cannot reach the feedback endpoint (cloud
+        platform, local OSS Memory). Callers must treat failures as non-fatal.
+        """
+        return None
+
     def close(self) -> None:
         pass
 
@@ -160,6 +174,18 @@ class SelfHostedBackend(Mem0Backend):
     def delete(self, memory_id: str) -> dict:
         self._json("DELETE", f"/memories/{memory_id}")
         return {"result": "Memory deleted.", "memory_id": memory_id}
+
+    def report_feedback(
+        self,
+        memory_id: str,
+        feedback_type: str,
+        source: str = "auto",
+        note: str | None = None,
+    ) -> dict:
+        body: dict[str, Any] = {"memory_id": memory_id, "feedback_type": feedback_type, "source": source}
+        if note is not None:
+            body["note"] = note
+        return self._json("POST", "/evolve/feedback", json=body)
 
     def close(self) -> None:
         try:
