@@ -110,3 +110,21 @@ class EvolveSalienceAdjustment(Base):
         ForeignKey("evolve_feedback.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class EvolveQuery(Base):
+    __tablename__ = "evolve_queries"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_new_uuid)
+    query: Mapped[str] = mapped_column(Text)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    depth: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    rerank: Mapped[bool] = mapped_column(default=False)
+    result_count: Mapped[int] = mapped_column(Integer, default=0)
+    avg_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    latency_ms: Mapped[float] = mapped_column(Float, default=0)
+    is_zero_hit: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)

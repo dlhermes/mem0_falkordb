@@ -3,6 +3,7 @@ import logging
 import os
 import secrets
 import string
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -22,7 +23,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from mem0.exceptions import ValidationError as Mem0ValidationError
-from models import RequestLog, User
+from models import EvolveQuery, RequestLog, User
 from pydantic import BaseModel, Field
 from rate_limit import limiter
 from routers import api_keys as api_keys_router
@@ -360,6 +361,36 @@ def _persist_request_log(method: str, path: str, status_code: int, latency_ms: f
         session.close()
 
 
+def _persist_evolve_query(row_data: Dict[str, Any]) -> None:
+    session = SessionLocal()
+    try:
+        session.add(EvolveQuery(**row_data))
+        session.commit()
+    except Exception:
+        session.rollback()
+        logging.exception("Failed to persist evolve query")
+    finally:
+        session.close()
+
+
+def _submit_evolve_query(row_data: Dict[str, Any]) -> None:
+    """Fire-and-forget evolve_queries write; never blocks the search request.
+
+    Async handlers have a running loop (run_in_executor); sync handlers run in a
+    threadpool with no loop, so fall back to a plain daemon thread. Either way a
+    failed write is logged and swallowed.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        threading.Thread(target=_persist_evolve_query, args=(row_data,), daemon=True).start()
+        return
+    try:
+        loop.run_in_executor(None, _persist_evolve_query, row_data)
+    except Exception:
+        pass
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     request.state.auth_type = getattr(request.state, "auth_type", "none")
@@ -523,6 +554,8 @@ def get_memory(memory_id: str, _auth=Depends(verify_auth)):
 @app.post("/search", summary="Search memories")
 def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
     """Search for memories based on a query."""
+    start = time.perf_counter()
+    query_log = {"query": search_req.query, "result_count": 0, "avg_score": None, "is_zero_hit": True}
     try:
         filters = search_req.filters or {}
         deprecated_keys = []
@@ -537,6 +570,9 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
                 ", ".join(deprecated_keys),
                 ", ".join(f'"{k}": "..."' for k in deprecated_keys),
             )
+        query_log["user_id"] = filters.get("user_id")
+        query_log["agent_id"] = filters.get("agent_id")
+        query_log["run_id"] = filters.get("run_id")
         params = {}
         if search_req.top_k is not None:
             params["top_k"] = search_req.top_k
@@ -554,13 +590,25 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
             params["rerank"] = True
         if search_req.depth is not None:
             params["depth"] = search_req.depth
-        return memory.search(query=search_req.query, filters=filters, **params)
+        query_log["top_k"] = params.get("top_k")
+        query_log["depth"] = params.get("depth")
+        query_log["rerank"] = bool(params.get("rerank", False))
+        raw = memory.search(query=search_req.query, filters=filters, **params)
+        results = raw.get("results", []) if isinstance(raw, dict) else raw
+        query_log["result_count"] = len(results)
+        query_log["is_zero_hit"] = query_log["result_count"] == 0
+        scores = [r.get("score") for r in results if isinstance(r, dict) and r.get("score") is not None]
+        query_log["avg_score"] = round(sum(scores) / len(scores), 4) if scores else None
+        return raw
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception:
         raise upstream_error()
+    finally:
+        query_log["latency_ms"] = round((time.perf_counter() - start) * 1000, 2)
+        _submit_evolve_query(query_log)
 
 
 @app.put("/memories/{memory_id}", summary="Update a memory")
