@@ -35,4 +35,6 @@ export const ENTITY_ENDPOINTS = {
 
 export const EVOLVE_ENDPOINTS = {
   REPORT: "/evolve/report",
+  RETAIN: (memoryId: string) =>
+    `/evolve/memory/${encodeURIComponent(memoryId)}/retain`,
 } as const;

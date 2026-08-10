@@ -28,7 +28,8 @@ import { getErrorMessage } from "@/lib/error-message";
 import { api } from "@/utils/api";
 import { EVOLVE_ENDPOINTS, MEMORY_ENDPOINTS } from "@/utils/api-endpoints";
 import { useApiQuery } from "@/hooks/use-api-query";
-import type { EvolveReport, Memory } from "@/types/api";
+import { toast } from "@/components/ui/use-toast";
+import type { EvolveIdleMemory, EvolveReport, Memory } from "@/types/api";
 
 const EMPTY_REPORT: EvolveReport = {
   search_quality: { windows: {}, daily_trend: [], top_zero_hits: [] },
@@ -121,6 +122,95 @@ const memoryIdCell = (value: string) => (
     <MemoryViewer memoryId={value} />
   </span>
 );
+
+function StaleActions({
+  memoryId,
+  onDone,
+}: {
+  memoryId: string;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState<null | "delete" | "retain">(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [error, setError] = useState("");
+
+  const run = async (
+    action: "delete" | "retain",
+    fn: () => Promise<unknown>,
+  ) => {
+    setBusy(action);
+    setError("");
+    try {
+      await fn();
+      setConfirmOpen(false);
+      toast({
+        title: action === "delete" ? "记忆已清理" : "记忆已保留",
+        variant: "success",
+      });
+      onDone();
+    } catch (err) {
+      setError(
+        getErrorMessage(err, action === "delete" ? "清理失败" : "保留失败"),
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        variant="outline"
+        size="xs"
+        onClick={() => setConfirmOpen(true)}
+        disabled={busy !== null}
+      >
+        清理
+      </Button>
+      <Button
+        variant="outline"
+        size="xs"
+        onClick={() =>
+          void run("retain", () => api.post(EVOLVE_ENDPOINTS.RETAIN(memoryId)))
+        }
+        disabled={busy !== null}
+      >
+        保留
+      </Button>
+      {error && (
+        <span className="text-[10px] text-onSurface-danger-primary">
+          {error}
+        </span>
+      )}
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>确认清理</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-onSurface-default-secondary">
+            删除记忆后不可恢复，热度数据会一并清理。确认清理这条记忆？
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={busy === "delete"}
+              onClick={() =>
+                void run("delete", () =>
+                  api.delete(MEMORY_ENDPOINTS.BY_ID(memoryId)),
+                )
+              }
+            >
+              {busy === "delete" ? "清理中..." : "确认清理"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
 
 function Panel({
   title,
@@ -364,15 +454,23 @@ export default function AnalyticsPage() {
     {
       key: "memory_id" as const,
       label: "记忆 ID",
-      width: 300,
+      width: 220,
       render: memoryIdCell,
     },
-    { key: "access_count" as const, label: "访问次数", width: 100 },
+    { key: "access_count" as const, label: "访问次数", width: 80 },
     {
       key: "last_access_at" as const,
       label: "最后访问",
-      width: 140,
+      width: 120,
       render: (v: string | null) => fmtDateTime(v),
+    },
+    {
+      key: "memory_id" as const,
+      label: "操作",
+      width: 140,
+      render: (_: string, row: EvolveIdleMemory) => (
+        <StaleActions memoryId={row.memory_id} onDone={() => void refetch()} />
+      ),
     },
   ];
 

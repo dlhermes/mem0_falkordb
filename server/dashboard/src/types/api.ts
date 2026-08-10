@@ -92,6 +92,11 @@ export interface EvolveIdleMemory {
   last_access_at: string | null;
 }
 
+export interface EvolveRetainResponse {
+  memory_id: string;
+  last_access_at: string;
+}
+
 export interface EvolveBoostRecord {
   memory_id: string;
   delta: number;

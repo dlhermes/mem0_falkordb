@@ -35,6 +35,11 @@ class FeedbackResponse(BaseModel):
     salience_score: float
 
 
+class RetainResponse(BaseModel):
+    memory_id: str
+    last_access_at: str
+
+
 @router.post("/feedback", response_model=FeedbackResponse)
 def submit_feedback(
     body: FeedbackRequest,
@@ -79,6 +84,30 @@ def submit_feedback(
     db.commit()
 
     return FeedbackResponse(memory_id=body.memory_id, salience_score=new_score)
+
+
+@router.post("/memory/{memory_id}/retain", response_model=RetainResponse)
+def retain_memory(
+    memory_id: str,
+    _auth=Depends(verify_auth),
+    db: Session = Depends(get_db),
+):
+    """Manually keep a memory and mark it as reviewed.
+
+    Bumps last_access_at so the stale (>14 days unrecalled) list drops it.
+    Memory content and salience score are untouched.
+    """
+    now = datetime.now(timezone.utc)
+    salience = db.get(EvolveSalience, memory_id)
+    if salience is None:
+        salience = EvolveSalience(memory_id=memory_id, last_access_at=now, updated_at=now)
+        db.add(salience)
+    else:
+        salience.last_access_at = now
+        salience.updated_at = now
+    db.commit()
+
+    return RetainResponse(memory_id=memory_id, last_access_at=now.isoformat())
 
 
 @router.get("/report")
