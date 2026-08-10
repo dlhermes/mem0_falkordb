@@ -478,24 +478,24 @@ curl -s -X POST http://localhost:8080/search \
 
 ## 搜索深度路由
 
-`/search` 端点新增可选参数 `depth`（minimal/standard/full）：
+`/search` 端点可选参数 `depth`（minimal/standard/full），自动判定由环境变量控制：
 
-- `minimal` — 跳过全部检索（命中废话白名单时）
+- `minimal` — 跳过全部检索（命中短确认词表时），降本 100%
 - `standard` — 仅向量+BM25，跳过图查询和 rerank
-- `full` — 完整检索（默认值，行为不变）
+- `full` — 完整检索（默认深度）
 
-**启用方式：** `config.json` 中设置 `enable_search_depth: true`（模板已默认开启）。未设置时所有查询走 `full` 深度，无降本效果。`MEM0_SEARCH_DEPTH_AUTO=true`（环境变量，默认 true）控制是否自动判定深度，关闭后可手动通过 `depth` 参数指定。
+**自动判定**：`MEM0_SEARCH_DEPTH_AUTO=true`（默认）时，查询词命中 `search_keywords` 词表决定深度：短确认词（"收到"/"好的"）→ minimal；疑问词（"什么"/"怎么"）→ standard；纠错词 → full；未命中任何词 → `MEM0_SEARCH_DEPTH_DEFAULT=full`。关闭自动判定后可手动通过 `depth` 参数指定。
+
+> 降本效果取决于查询内容：短确认句命中 minimal 完全跳过检索；日常长句未命中词表走 full。实际深度可在 Analytics「召回漏斗」或 `evolve_queries.depth` 观测。
 
 关键词管理：通过 `search_keywords` 表（SQLite）管理，`INSERT` 即生效，无需重启。
 
 ```bash
 # 查看当前词表
-docker exec mem0-dev-mem0-1 sqlite3 /root/.mem0/history.db \
-  "SELECT * FROM search_keywords ORDER BY category, keyword"
+docker exec mem0-dev-mem0-1 python3 -c "import sqlite3; db=sqlite3.connect('/app/history/history.db'); [print(r) for r in db.execute('SELECT category, keyword FROM search_keywords ORDER BY category, keyword')]"
 
 # 添加 minimal 拦截词
-docker exec mem0-dev-mem0-1 sqlite3 /root/.mem0/history.db \
-  "INSERT OR IGNORE INTO search_keywords (category, keyword, match_type, lang) VALUES ('minimal', '收到', 'exact', 'zh')"
+docker exec mem0-dev-mem0-1 python3 -c "import sqlite3; db=sqlite3.connect('/app/history/history.db'); db.execute(\"INSERT OR IGNORE INTO search_keywords (category, keyword, match_type, lang) VALUES ('minimal', '收到', 'exact', 'zh')\"); db.commit()"
 ```
 
 ## 记忆衰减（含 Lane 分轨）

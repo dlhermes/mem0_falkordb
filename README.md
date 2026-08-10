@@ -289,7 +289,7 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 | `standard` | embedding + BM25（跳过图 + rerank） | ~70% |
 | `full` | embedding + BM25 + 图 + rerank（默认） | 0% |
 
-深度自动判定在 `Memory.search()` 入口执行；词表存 SQLite `search_keywords` 表，增删词即生效，无需重启。
+深度自动判定在 `Memory.search()` 入口执行；词表存 SQLite `search_keywords` 表（路径 `/app/history/history.db`），增删词即生效，无需重启。每次搜索实际走的深度记录在 `evolve_queries.depth`，可在 Analytics「召回漏斗」观测。
 
 ### 记忆热度体系
 
