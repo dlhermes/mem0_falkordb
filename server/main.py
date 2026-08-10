@@ -613,6 +613,7 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
     start = time.perf_counter()
     query_log = {"query": search_req.query, "result_count": 0, "avg_score": None, "is_zero_hit": True}
     results = []
+    trace_dict = None
     try:
         filters = search_req.filters or {}
         deprecated_keys = []
@@ -650,8 +651,13 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
         query_log["top_k"] = params.get("top_k")
         query_log["depth"] = params.get("depth")
         query_log["rerank"] = bool(params.get("rerank", False))
-        raw = memory.search(query=search_req.query, filters=filters, **params)
-        results = raw.get("results", []) if isinstance(raw, dict) else raw
+        raw = memory.search(query=search_req.query, filters=filters, trace=True, **params)
+        if isinstance(raw, dict):
+            # trace is internal RECALL observability, never surfaced to clients
+            trace_dict = raw.pop("trace", None)
+            results = raw.get("results", [])
+        else:
+            results = raw
         query_log["result_count"] = len(results)
         query_log["is_zero_hit"] = query_log["result_count"] == 0
         scores = [r.get("score") for r in results if isinstance(r, dict) and r.get("score") is not None]
@@ -665,6 +671,7 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
         raise upstream_error()
     finally:
         query_log["latency_ms"] = round((time.perf_counter() - start) * 1000, 2)
+        query_log["trace"] = trace_dict
         _submit_evolve_query(query_log)
         # Graph fragments carry transient uuids (source="graph") and must not
         # be counted as accesses; vector results use the real memory id.
