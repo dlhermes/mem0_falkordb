@@ -107,7 +107,7 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 
 **根因**：`docker-compose.yaml` 中 pgvector 的 `POSTGRES_DB` 未显式设置，Mem0 的 v2.0.x 将向量表创建在默认的 `postgres` 库中（非 `mem0_app`）。Alembic 管理的业务表（users/api_keys/request_logs 等）在 `mem0_app` 库，而向量存储的表在 `postgres` 库——两个库各自独立。
 
-**说明**：这是上游设计，非 bug。了解即可，正常使用不受影响。
+**说明**：业务表（users/api_keys/request_logs 等）与向量表分属两个库，各自独立，正常使用不受影响。
 
 ### 5. FalkorDB 空图现象
 
@@ -117,9 +117,9 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 
 ### 6. config.json 挂载缺失
 
-**现象**：旧版 `docker-compose.yaml` 缺少 `config.json` 挂载。
+**现象**：`docker-compose.yaml` 缺少 `config.json` 挂载，配置不生效。
 
-**修复**：已在 mem0 服务 volumes 中添加 `- ./config.json:/app/config.json:ro`。
+**修复**：在 mem0 服务 volumes 中添加 `- ./config.json:/app/config.json:ro`（当前模板已内置）。
 
 ### 7. config.json 字段名错误导致容器启动崩溃
 
@@ -207,7 +207,7 @@ CREATE INDEX IF NOT EXISTS memories_hnsw_idx ON memories USING hnsw (vector vect
 }
 ```
 
-同时保留上游全部 Provider：Zero Entropy、Cohere、Sentence Transformer、HuggingFace、LLM-based。详见 [docs.mem0.ai](https://docs.mem0.ai/open-source/overview)。
+同时支持其他 Provider：Zero Entropy、Cohere、Sentence Transformer、HuggingFace、LLM-based。详见 [docs.mem0.ai](https://docs.mem0.ai/open-source/overview)。
 
 ### 11. pgvector 维度检测 Bug（重建容器后记忆清空）
 
@@ -235,7 +235,7 @@ curl -s http://<llm-host>/v1/chat/completions \
 
 **修复**（2026-08-04 落地）：
 1. `config.json` 的 `llm.config` 追加 `"reasoning_effort": "none"`，让模型跳过思考通道直接输出 `content`；
-2. `mem0/llms/base.py` 的 `_get_common_params()` 增加 `reasoning_effort` 透传——上游只在推理模型白名单（o1/o3/gpt-5 系列）内透传，白名单外模型配置了也会被丢弃。
+2. `mem0/llms/base.py` 的 `_get_common_params()` 支持任意模型透传 `reasoning_effort` 参数（不限于推理模型白名单）。
 
 > ⚠️ 此项仅推理模型需要，普通模型（OpenAI/GPT、Claude、DeepSeek 非 R1 版等）**无需配置**。取消方法：删除 `config.json` 中 `"reasoning_effort"` 字段即可恢复默认（代码改动无副作用）；如需还原代码，删除 `_get_common_params()` 中「Add reasoning_effort if configured」注释段。
 
@@ -432,7 +432,7 @@ docker exec -e DEDUP_DRY_RUN=true -e MEM0_CONFIG_PATH=/app/config.json mem0-dev-
 docker exec -e MEM0_CONFIG_PATH=/app/config.json mem0-dev-mem0-1 python3 /app/scripts/dedup_memories.py
 ```
 
-> ⚠️ `consolidate_memories.py`（旧版碎片合并）已弃用——曾因 fallback 把全部记忆压成 3 条导致信息丢失。请使用 `dedup_memories.py`（只合并近重复、不压缩内容）。
+> 近重复记忆自动合并，只合并近似表达、不压缩内容，安全性优先。
 
 ### 进化循环
 
