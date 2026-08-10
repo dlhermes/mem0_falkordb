@@ -42,3 +42,85 @@ export interface Entity {
   created_at: string | null;
   updated_at: string | null;
 }
+
+export interface EvolveSearchWindow {
+  total_queries: number;
+  zero_hit_rate: number;
+  avg_score: number;
+  avg_latency_ms: number;
+}
+
+export interface EvolveTrendPoint {
+  date: string;
+  queries: number;
+  avg_score: number;
+  zero_hits: number;
+}
+
+export interface EvolveZeroHit {
+  query: string;
+  count: number;
+}
+
+export interface EvolveTypeDistribution {
+  useful: number;
+  useless: number;
+  correction: number;
+}
+
+export interface EvolveMostCorrected {
+  memory_id: string;
+  count: number;
+}
+
+export interface EvolveScoreDistribution {
+  "lt_0.5": number;
+  "0.5_0.9": number;
+  "0.9_1.1": number;
+  "gt_1.1": number;
+}
+
+export interface EvolveHighFrequency {
+  memory_id: string;
+  access_count: number;
+  salience_score: number;
+}
+
+export interface EvolveIdleMemory {
+  memory_id: string;
+  access_count: number;
+  last_access_at: string | null;
+}
+
+export interface EvolveBoostRecord {
+  memory_id: string;
+  delta: number;
+  created_at: string | null;
+}
+
+export interface EvolveOperationsWindow {
+  total_requests: number;
+  avg_latency_ms: number;
+  success_rate: number;
+}
+
+export interface EvolveReport {
+  search_quality: {
+    windows: Record<string, EvolveSearchWindow>;
+    daily_trend: EvolveTrendPoint[];
+    top_zero_hits: EvolveZeroHit[];
+  };
+  feedback: {
+    type_distribution: EvolveTypeDistribution;
+    most_corrected: EvolveMostCorrected[];
+  };
+  heat: {
+    score_distribution: EvolveScoreDistribution;
+    high_frequency: EvolveHighFrequency[];
+    stale: EvolveIdleMemory[];
+    boost_adjustments: EvolveBoostRecord[];
+  };
+  operations: {
+    windows: Record<string, EvolveOperationsWindow>;
+  };
+}
