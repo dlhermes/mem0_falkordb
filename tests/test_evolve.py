@@ -7,6 +7,10 @@ import pytest
 
 pytest.importorskip("fastapi", reason="fastapi not installed")
 
+os.environ.setdefault("AUTH_DISABLED", "true")
+os.environ.setdefault("JWT_SECRET", "test-secret-for-evolve")
+os.environ.setdefault("OPENAI_API_KEY", "test-key-not-used")
+
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine, select  # noqa: E402

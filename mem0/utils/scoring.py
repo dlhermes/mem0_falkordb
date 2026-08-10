@@ -65,6 +65,8 @@ def score_and_rank(
     top_k: int,
     explain: bool = False,
     decay_fn: Optional[Callable[[Dict], float]] = None,
+    salience_scores: Optional[Dict[str, float]] = None,
+    salience_rank_weight: float = 0.0,
 ) -> List[Dict[str, Any]]:
     """Score candidates additively and return top-k results.
 
@@ -92,6 +94,10 @@ def score_and_rank(
         threshold: Minimum semantic score required before hybrid scoring.
         top_k: Maximum number of results to return.
         explain: Include score_details in each result when true.
+        salience_scores: Optional heat_s (min(access_count/100, 1)) keyed by
+            memory ID. Only applied when non-empty.
+        salience_rank_weight: Multiplicative weight for the salience boost;
+            default 0 keeps ordering identical to current behavior.
 
     Returns:
         List of scored result dicts sorted by combined score descending.
@@ -128,13 +134,25 @@ def score_and_rank(
         raw_combined = decayed_semantic + bm25_score + entity_boost
         combined = min(raw_combined / max_possible, 1.0)
 
+        # Salience (usage frequency) is an opt-in multiplicative boost: final =
+        # combined x (1 + weight x heat_s). Decay governs time, salience governs
+        # frequency; they never stack into double decay. weight defaults to 0,
+        # so ordering is byte-for-byte identical to current behavior.
+        salience_active = bool(salience_scores)
+        heat_s = 0.0
+        salience_boost = 1.0
+        if salience_active:
+            heat_s = salience_scores.get(mem_id_str, 0.0)
+            salience_boost = 1.0 + salience_rank_weight * heat_s
+        combined = combined * salience_boost
+
         scored_result = {
             "id": mem_id_str,
             "score": combined,
             "payload": result.get("payload"),
         }
         if explain:
-            scored_result["score_details"] = {
+            score_details = {
                 "semantic_score": semantic_score,
                 "decay_multiplier": decay_multiplier,
                 "decayed_semantic": decayed_semantic,
@@ -145,6 +163,15 @@ def score_and_rank(
                 "final_score": combined,
                 "threshold": threshold,
             }
+            if salience_active:
+                score_details.update(
+                    {
+                        "salience_heat": heat_s,
+                        "salience_rank_weight": salience_rank_weight,
+                        "salience_boost": salience_boost,
+                    }
+                )
+            scored_result["score_details"] = score_details
         scored.append(scored_result)
 
     scored.sort(key=lambda x: x["score"], reverse=True)

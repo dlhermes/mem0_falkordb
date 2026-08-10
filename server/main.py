@@ -5,6 +5,7 @@ import secrets
 import string
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import telemetry
@@ -23,7 +24,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from mem0.exceptions import ValidationError as Mem0ValidationError
-from models import EvolveQuery, RequestLog, User
+from models import EvolveQuery, EvolveSalience, RequestLog, User
 from pydantic import BaseModel, Field
 from rate_limit import limiter
 from routers import api_keys as api_keys_router
@@ -361,11 +362,19 @@ def _persist_request_log(method: str, path: str, status_code: int, latency_ms: f
         session.close()
 
 
+# Serializes the fire-and-forget evolve writes. Postgres is fine without it,
+# but the test suite swaps SessionLocal for a single-connection sqlite engine
+# (StaticPool); two concurrent persist transactions on one connection race and
+# one gets swallowed. Writes are tiny inserts, so a global lock is harmless.
+_EVOLVE_WRITE_LOCK = threading.Lock()
+
+
 def _persist_evolve_query(row_data: Dict[str, Any]) -> None:
     session = SessionLocal()
     try:
-        session.add(EvolveQuery(**row_data))
-        session.commit()
+        with _EVOLVE_WRITE_LOCK:
+            session.add(EvolveQuery(**row_data))
+            session.commit()
     except Exception:
         session.rollback()
         logging.exception("Failed to persist evolve query")
@@ -387,6 +396,52 @@ def _submit_evolve_query(row_data: Dict[str, Any]) -> None:
         return
     try:
         loop.run_in_executor(None, _persist_evolve_query, row_data)
+    except Exception:
+        pass
+
+
+def _persist_evolve_salience_access(memory_ids: List[str]) -> None:
+    """Bump access_count + last_access_at for hit memories (fire-and-forget)."""
+    if not memory_ids:
+        return
+    session = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        with _EVOLVE_WRITE_LOCK:
+            for mem_id in memory_ids:
+                row = session.get(EvolveSalience, mem_id)
+                if row is None:
+                    session.add(
+                        EvolveSalience(memory_id=mem_id, access_count=1, last_access_at=now, updated_at=now)
+                    )
+                else:
+                    row.access_count = (row.access_count or 0) + 1
+                    row.last_access_at = now
+                    row.updated_at = now
+            session.commit()
+    except Exception:
+        session.rollback()
+        logging.exception("Failed to persist evolve salience access")
+    finally:
+        session.close()
+
+
+def _submit_evolve_salience_access(memory_ids: List[str]) -> None:
+    """Fire-and-forget salience access-count write; never blocks search.
+
+    Mirrors _submit_evolve_query: executor when a loop is running, else a
+    daemon thread. Graph-fragment ids are transient uuids and are filtered out
+    by the caller before this is reached.
+    """
+    if not memory_ids:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        threading.Thread(target=_persist_evolve_salience_access, args=(memory_ids,), daemon=True).start()
+        return
+    try:
+        loop.run_in_executor(None, _persist_evolve_salience_access, memory_ids)
     except Exception:
         pass
 
@@ -556,6 +611,7 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
     """Search for memories based on a query."""
     start = time.perf_counter()
     query_log = {"query": search_req.query, "result_count": 0, "avg_score": None, "is_zero_hit": True}
+    results = []
     try:
         filters = search_req.filters or {}
         deprecated_keys = []
@@ -609,6 +665,11 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
     finally:
         query_log["latency_ms"] = round((time.perf_counter() - start) * 1000, 2)
         _submit_evolve_query(query_log)
+        # Graph fragments carry transient uuids (source="graph") and must not
+        # be counted as accesses; vector results use the real memory id.
+        _submit_evolve_salience_access(
+            [r["id"] for r in results if isinstance(r, dict) and r.get("id") and r.get("source") != "graph"]
+        )
 
 
 @app.put("/memories/{memory_id}", summary="Update a memory")

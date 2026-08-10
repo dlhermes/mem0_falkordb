@@ -88,6 +88,31 @@ def _load_config_file() -> Dict[str, Any]:
         return {}
 
 
+def _attach_salience_provider(memory: Memory) -> Memory:
+    """Wire evolve_salience access counts into search ranking.
+
+    Active only when MEM0_EVOLVE_RANK_WEIGHT>0; otherwise _search_vector_store
+    never calls the provider. Reads happen inside scoring (opt-in latency).
+    """
+    from models import EvolveSalience
+    from sqlalchemy import select
+
+    def _provider(memory_ids):
+        if not memory_ids or _session_factory is None:
+            return {}
+        session = _session_factory()
+        try:
+            rows = session.scalars(
+                select(EvolveSalience).where(EvolveSalience.memory_id.in_(memory_ids))
+            ).all()
+            return {r.memory_id: r.access_count or 0 for r in rows}
+        finally:
+            session.close()
+
+    memory.salience_provider = _provider
+    return memory
+
+
 def initialize_state(default_config: Dict[str, Any]) -> None:
     global _current_config, _memory_instance
     with _state_lock:
@@ -98,7 +123,7 @@ def initialize_state(default_config: Dict[str, Any]) -> None:
         overrides = _load_overrides()
         if overrides:
             _current_config = _merge_config(_current_config, overrides)
-        _memory_instance = Memory.from_config(_current_config)
+        _memory_instance = _attach_salience_provider(Memory.from_config(_current_config))
 
 
 def update_config(updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -106,7 +131,7 @@ def update_config(updates: Dict[str, Any]) -> Dict[str, Any]:
     with _state_lock:
         next_config = _merge_config(_current_config, updates)
         _current_config = next_config
-        _memory_instance = Memory.from_config(next_config)
+        _memory_instance = _attach_salience_provider(Memory.from_config(next_config))
         overrides = _load_overrides()
         overrides = _merge_config(overrides, updates)
         _save_overrides(overrides)
