@@ -117,6 +117,26 @@ def test_search_persists_trace(client):
     assert row.trace["stages"][0]["count"] == 42
 
 
+def test_evolve_queries_depth_reflects_trace_depth(client):
+    _set_memory(client, _FakeMemory(results=[{"id": "a", "memory": "m1", "score": 0.9}], trace=_TRACE))
+
+    resp = client[0].post("/search", json={"query": "depth from trace", "depth": "minimal"})
+    assert resp.status_code == 200
+
+    row = _row_for(client, "depth from trace")
+    assert row.depth == "full"
+
+
+def test_evolve_queries_depth_keeps_param_without_trace(client):
+    _set_memory(client, _FakeMemory(results=[{"id": "a", "memory": "m1", "score": 0.9}], trace=None))
+
+    resp = client[0].post("/search", json={"query": "depth param only", "depth": "minimal"})
+    assert resp.status_code == 200
+
+    row = _row_for(client, "depth param only")
+    assert row.depth == "minimal"
+
+
 def test_trace_not_leaked_to_client(client):
     _set_memory(client, _FakeMemory(results=[{"id": "a", "memory": "m1", "score": 0.9}], trace=_TRACE))
 

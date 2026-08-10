@@ -672,6 +672,8 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
     finally:
         query_log["latency_ms"] = round((time.perf_counter() - start) * 1000, 2)
         query_log["trace"] = trace_dict
+        if isinstance(trace_dict, dict) and trace_dict.get("depth"):
+            query_log["depth"] = trace_dict["depth"]
         _submit_evolve_query(query_log)
         # Graph fragments carry transient uuids (source="graph") and must not
         # be counted as accesses; vector results use the real memory id.
