@@ -109,6 +109,23 @@ export interface EvolveOperationsWindow {
   success_rate: number;
 }
 
+export interface RecallStageStat {
+  stage: string;
+  avg_count: number;
+  avg_latency_ms: number;
+}
+
+export interface RecallTraceSample {
+  query: string;
+  created_at: string | null;
+  stages: { stage: string; count: number; latency_ms: number }[];
+}
+
+export interface RecallReport {
+  stages: RecallStageStat[];
+  recent: RecallTraceSample[];
+}
+
 export interface EvolveReport {
   search_quality: {
     windows: Record<string, EvolveSearchWindow>;
@@ -128,4 +145,5 @@ export interface EvolveReport {
   operations: {
     windows: Record<string, EvolveOperationsWindow>;
   };
+  recall: RecallReport;
 }

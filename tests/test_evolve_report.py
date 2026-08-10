@@ -72,7 +72,7 @@ def test_empty_db_returns_full_structure(client):
     resp = _get(client)
     assert resp.status_code == 200
     data = resp.json()
-    assert set(data) == {"search_quality", "feedback", "heat", "operations"}
+    assert set(data) == {"search_quality", "feedback", "heat", "operations", "recall"}
 
     sq = data["search_quality"]
     assert set(sq) == {"windows", "daily_trend", "top_zero_hits"}
@@ -100,6 +100,8 @@ def test_empty_db_returns_full_structure(client):
     assert set(ops["windows"]) == {"7", "30"}
     for window in ops["windows"].values():
         assert window == {"total_requests": 0, "avg_latency_ms": 0, "success_rate": 0}
+
+    assert data["recall"] == {"stages": [], "recent": []}
 
 
 def test_seeded_data_populates_panels(client):

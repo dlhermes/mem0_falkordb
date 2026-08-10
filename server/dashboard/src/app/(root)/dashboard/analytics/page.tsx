@@ -29,7 +29,12 @@ import { api } from "@/utils/api";
 import { EVOLVE_ENDPOINTS, MEMORY_ENDPOINTS } from "@/utils/api-endpoints";
 import { useApiQuery } from "@/hooks/use-api-query";
 import { toast } from "@/components/ui/use-toast";
-import type { EvolveIdleMemory, EvolveReport, Memory } from "@/types/api";
+import type {
+  EvolveIdleMemory,
+  EvolveReport,
+  Memory,
+  RecallStageStat,
+} from "@/types/api";
 
 const EMPTY_REPORT: EvolveReport = {
   search_quality: { windows: {}, daily_trend: [], top_zero_hits: [] },
@@ -49,6 +54,7 @@ const EMPTY_REPORT: EvolveReport = {
     boost_adjustments: [],
   },
   operations: { windows: {} },
+  recall: { stages: [], recent: [] },
 };
 
 const fmtCount = (n: number) => n.toLocaleString();
@@ -253,10 +259,10 @@ function Section({
   );
 }
 
-function NoData() {
+function NoData({ text = "暂无数据" }: { text?: string }) {
   return (
     <p className="py-4 text-center text-xs text-onSurface-default-tertiary">
-      暂无数据
+      {text}
     </p>
   );
 }
@@ -326,6 +332,67 @@ function ScoreHistogram({
   );
 }
 
+const RECALL_STAGES: { key: string; name: string }[] = [
+  { key: "candidates", name: "候选池" },
+  { key: "threshold", name: "阈值过滤" },
+  { key: "decay", name: "时间衰减" },
+  { key: "graph", name: "图召回" },
+  { key: "rerank", name: "重排序" },
+  { key: "final", name: "最终" },
+];
+
+function RecallFunnel({ stages }: { stages: RecallStageStat[] }) {
+  const byStage = new Map(stages.map((s) => [s.stage, s]));
+  const rows = RECALL_STAGES.map(({ key, name }) => ({
+    name,
+    avg_count: byStage.get(key)?.avg_count ?? 0,
+    avg_latency_ms: byStage.get(key)?.avg_latency_ms ?? 0,
+  }));
+  const maxCount = Math.max(...rows.map((r) => r.avg_count), 1);
+  const maxLatency = Math.max(...rows.map((r) => r.avg_latency_ms), 1);
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        {rows.map((r) => (
+          <div
+            key={r.name}
+            className="grid grid-cols-[56px_1fr_64px] items-center gap-2 text-xs"
+          >
+            <span className="text-onSurface-default-secondary">{r.name}</span>
+            <div className="flex h-5 items-center justify-center">
+              <div
+                className="h-full rounded bg-surface-default-brand"
+                style={{ width: `${(r.avg_count / maxCount) * 100}%` }}
+              />
+            </div>
+            <span className="text-right text-onSurface-default-primary">
+              {fmtCount(Math.round(r.avg_count))}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="space-y-3">
+        {rows.map((r) => (
+          <div key={r.name}>
+            <div className="mb-1 flex items-center justify-between text-xs">
+              <span className="text-onSurface-default-secondary">{r.name}</span>
+              <span className="text-onSurface-default-primary">
+                {fmtMs(r.avg_latency_ms)}
+              </span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-surface-default-secondary">
+              <div
+                className="h-full rounded-full bg-sky-500"
+                style={{ width: `${(r.avg_latency_ms / maxLatency) * 100}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsPage() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
@@ -345,7 +412,7 @@ export default function AnalyticsPage() {
     { errorToast: "加载分析数据失败", initialData: EMPTY_REPORT },
   );
 
-  const { search_quality, feedback, heat, operations } = report;
+  const { search_quality, feedback, heat, operations, recall } = report;
 
   const searchRows = Object.entries(search_quality.windows).map(
     ([days, w]) => ({
@@ -738,6 +805,17 @@ export default function AnalyticsPage() {
                 <NoData />
               )}
             </Section>
+          </Panel>
+
+          <Panel
+            title="召回漏斗"
+            description="近 7 天检索各阶段平均命中数与耗时，观察召回逐级收窄。"
+          >
+            {recall.stages.length > 0 ? (
+              <RecallFunnel stages={recall.stages} />
+            ) : (
+              <NoData text="暂无召回数据" />
+            )}
           </Panel>
         </>
       )}

@@ -313,6 +313,48 @@ def evolve_report(
             "success_rate": rate(ok_count or 0, total),
         }
 
+    stage_order = ["candidates", "threshold", "decay", "graph", "rerank", "final"]
+    stage_agg: dict[str, list[float]] = {}
+    recent: list[dict] = []
+    trace_rows = db.execute(
+        select(EvolveQuery.query, EvolveQuery.created_at, EvolveQuery.trace)
+        .where(
+            EvolveQuery.trace.is_not(None),
+            EvolveQuery.created_at >= cutoff(7),
+        )
+        .order_by(EvolveQuery.created_at.desc())
+    ).all()
+    for query, created, trace in trace_rows:
+        if not isinstance(trace, dict) or not isinstance(trace.get("stages"), list):
+            continue
+        for s in trace["stages"]:
+            if s.get("stage") not in stage_order:
+                continue
+            agg = stage_agg.setdefault(s["stage"], [0.0, 0.0, 0.0])
+            agg[0] += 1
+            agg[1] += s.get("count") or 0
+            agg[2] += s.get("latency_ms") or 0
+        if len(recent) < 10:
+            recent.append(
+                {
+                    "query": query,
+                    "created_at": created.isoformat() if created else None,
+                    "stages": trace["stages"],
+                }
+            )
+    recall = {
+        "stages": [
+            {
+                "stage": stage,
+                "avg_count": num(agg[1] / agg[0]),
+                "avg_latency_ms": num(agg[2] / agg[0]),
+            }
+            for stage in stage_order
+            if (agg := stage_agg.get(stage))
+        ],
+        "recent": recent,
+    }
+
     return {
         "search_quality": {
             "windows": {str(w): search_window(w) for w in window_days},
@@ -330,4 +372,5 @@ def evolve_report(
             "boost_adjustments": boost_adjustments,
         },
         "operations": {"windows": {str(w): op_window(w) for w in window_days}},
+        "recall": recall,
     }
