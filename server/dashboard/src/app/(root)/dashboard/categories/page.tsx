@@ -27,8 +27,8 @@ function CategoriesMockup() {
 export default function CategoriesPage() {
   return (
     <LockedPage
-      title="Custom Categories"
-      description="Organize memories by domain -- health, preferences, work, and more."
+      title="自定义分类"
+      description="按领域组织记忆——健康、偏好、工作等。"
       previewContent={<CategoriesMockup />}
       utmMedium="dashboard-locked-categories"
     />

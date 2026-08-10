@@ -5,8 +5,8 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/lib/auth";
 
 export const metadata = {
-  title: "Setup | Mem0",
-  description: "Set up your Mem0 instance",
+  title: "设置 | Mem0",
+  description: "设置你的 Mem0 实例",
 };
 
 export default function SetupLayout({
@@ -16,7 +16,7 @@ export default function SetupLayout({
 }) {
   return (
     <html
-      lang="en"
+      lang="zh-CN"
       className={cn(
         Fustat.variable,
         InterDisplay.variable,

@@ -11,7 +11,7 @@ function ExportMockup() {
       <Card className="border-memBorder-primary">
         <CardContent className="p-6 space-y-4">
           <div className="space-y-2">
-            <Label>Format</Label>
+            <Label>格式</Label>
             <div className="flex gap-2">
               {["JSON", "CSV", "Pydantic Schema"].map((fmt) => (
                 <Button
@@ -27,7 +27,7 @@ function ExportMockup() {
             </div>
           </div>
           <div className="space-y-2">
-            <Label>Sample output</Label>
+            <Label>示例输出</Label>
             <Card className="border-memBorder-primary bg-surface-default-secondary">
               <CardContent className="p-3">
                 <pre className="text-xs text-onSurface-default-secondary font-mono whitespace-pre-wrap">
@@ -46,7 +46,7 @@ function ExportMockup() {
               </CardContent>
             </Card>
           </div>
-          <Button disabled>Export Memories</Button>
+          <Button disabled>导出记忆</Button>
         </CardContent>
       </Card>
     </div>
@@ -56,8 +56,8 @@ function ExportMockup() {
 export default function ExportPage() {
   return (
     <LockedPage
-      title="Export"
-      description="Export your memories in JSON, CSV, or Pydantic schema format."
+      title="导出"
+      description="以 JSON、CSV 或 Pydantic schema 格式导出你的记忆。"
       previewContent={<ExportMockup />}
       utmMedium="dashboard-locked-export"
     />

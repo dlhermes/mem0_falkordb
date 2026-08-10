@@ -96,12 +96,12 @@ const createApi = (): AxiosInstance & {
     if (response.status === 401) {
       handleTokenError();
       redirectToLogin();
-      throw new Error("Unauthorized");
+      throw new Error("未授权");
     }
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || "Request failed");
+      throw new Error(errorData.error || "请求失败");
     }
 
     return response;

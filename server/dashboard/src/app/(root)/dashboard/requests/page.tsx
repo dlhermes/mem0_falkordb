@@ -58,11 +58,11 @@ const getAuthLabel = (authType: string) => {
     case "bearer":
       return "JWT";
     case "api_key":
-      return "API Key";
+      return "API 密钥";
     case "admin_api_key":
-      return "Admin Key";
+      return "管理员密钥";
     case "disabled":
-      return "Disabled";
+      return "已禁用";
     default:
       return "--";
   }
@@ -97,7 +97,7 @@ export default function RequestsPage() {
       setLastUpdated(new Date().toISOString());
       return (res.data ?? []).map(normalizeLog);
     },
-    { errorToast: "Failed to load request logs", initialData: [] },
+    { errorToast: "加载请求日志失败", initialData: [] },
   );
 
   const totalRequests = logs.length;
@@ -116,7 +116,7 @@ export default function RequestsPage() {
   const columns = [
     {
       key: "createdAt" as keyof RequestLog,
-      label: "Time",
+      label: "时间",
       width: 140,
       render: (value: string) => (
         <span title={format(new Date(value), "PPpp")}>
@@ -126,7 +126,7 @@ export default function RequestsPage() {
     },
     {
       key: "method" as keyof RequestLog,
-      label: "Method",
+      label: "方法",
       width: 96,
       render: (value: string) => (
         <Badge variant="outline" className={getMethodClassName(value)}>
@@ -136,7 +136,7 @@ export default function RequestsPage() {
     },
     {
       key: "path" as keyof RequestLog,
-      label: "Path",
+      label: "路径",
       width: 360,
       render: (value: string) => (
         <span className="font-mono text-xs break-all text-onSurface-default-primary">
@@ -146,7 +146,7 @@ export default function RequestsPage() {
     },
     {
       key: "statusCode" as keyof RequestLog,
-      label: "Status",
+      label: "状态",
       width: 120,
       render: (value: number) => (
         <Badge variant="outline" className={getStatusClassName(value)}>
@@ -156,13 +156,13 @@ export default function RequestsPage() {
     },
     {
       key: "latencyMs" as keyof RequestLog,
-      label: "Latency",
+      label: "延迟",
       width: 100,
       render: (value: number) => <span>{value} ms</span>,
     },
     {
       key: "authType" as keyof RequestLog,
-      label: "Auth",
+      label: "认证",
       width: 120,
       render: (value: string) => getAuthLabel(value),
     },
@@ -172,13 +172,13 @@ export default function RequestsPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-xl font-semibold font-fustat">Requests</h1>
+          <h1 className="text-xl font-semibold font-fustat">请求</h1>
           <p className="text-sm text-onSurface-default-secondary">
-            Recent request logs from your self-hosted instance.
+            来自你自托管实例的最近请求日志。
           </p>
           {lastUpdated && (
             <p className="text-xs text-onSurface-default-tertiary">
-              Last updated{" "}
+              上次更新于{" "}
               {formatDistanceToNow(new Date(lastUpdated), { addSuffix: true })}
             </p>
           )}
@@ -192,19 +192,19 @@ export default function RequestsPage() {
           disabled={isLoading}
         >
           <RefreshCw className="size-4 mr-2" />
-          Refresh
+          刷新
         </Button>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {[
-          { label: "Total Requests", value: totalRequests },
+          { label: "总请求数", value: totalRequests },
           {
-            label: "Success Rate",
+            label: "成功率",
             value: totalRequests > 0 ? `${successRate}%` : "--",
           },
           {
-            label: "Avg Latency",
+            label: "平均延迟",
             value: totalRequests > 0 ? `${averageLatency} ms` : "--",
           },
         ].map((card) => (
@@ -231,8 +231,8 @@ export default function RequestsPage() {
         <TableSkeleton rows={6} columns={6} />
       ) : logs.length === 0 ? (
         <EmptyState
-          title="No request logs yet"
-          description="Requests will appear here once your instance receives traffic."
+          title="还没有请求日志"
+          description="当你的实例开始收到请求时，日志会显示在这里。"
           image="requests"
         />
       ) : (
@@ -247,8 +247,9 @@ export default function RequestsPage() {
           {logs.length > PAGE_SIZE && (
             <div className="flex items-center justify-between text-sm text-onSurface-default-tertiary">
               <span>
-                {page * PAGE_SIZE + 1}–
-                {Math.min((page + 1) * PAGE_SIZE, logs.length)} of {logs.length}
+                第 {page * PAGE_SIZE + 1}–
+                {Math.min((page + 1) * PAGE_SIZE, logs.length)} 条，共{" "}
+                {logs.length} 条
               </span>
               <div className="flex gap-2">
                 <Button
@@ -257,7 +258,7 @@ export default function RequestsPage() {
                   disabled={page === 0}
                   onClick={() => setPage((p) => p - 1)}
                 >
-                  Previous
+                  上一页
                 </Button>
                 <Button
                   variant="outline"
@@ -265,7 +266,7 @@ export default function RequestsPage() {
                   disabled={(page + 1) * PAGE_SIZE >= logs.length}
                   onClick={() => setPage((p) => p + 1)}
                 >
-                  Next
+                  下一页
                 </Button>
               </div>
             </div>
