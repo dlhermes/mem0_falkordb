@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { format, formatDistanceToNow } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { RefreshCw } from "lucide-react";
@@ -15,12 +15,20 @@ import {
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { DataTable } from "@/components/shared/data-table";
 import { TableSkeleton } from "@/components/shared/table-skeleton";
+import { getErrorMessage } from "@/lib/error-message";
 import { api } from "@/utils/api";
-import { EVOLVE_ENDPOINTS } from "@/utils/api-endpoints";
+import { EVOLVE_ENDPOINTS, MEMORY_ENDPOINTS } from "@/utils/api-endpoints";
 import { useApiQuery } from "@/hooks/use-api-query";
-import type { EvolveReport } from "@/types/api";
+import type { EvolveReport, Memory } from "@/types/api";
 
 const EMPTY_REPORT: EvolveReport = {
   search_quality: { windows: {}, daily_trend: [], top_zero_hits: [] },
@@ -51,8 +59,67 @@ const fmtDay = (iso: string) =>
 const fmtDateTime = (iso: string | null | undefined) =>
   iso ? format(new Date(iso), "MMM d, yyyy", { locale: zhCN }) : "--";
 
+function MemoryViewer({ memoryId }: { memoryId: string }) {
+  const [open, setOpen] = useState(false);
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    setContent("");
+    api
+      .get<Memory>(MEMORY_ENDPOINTS.BY_ID(memoryId))
+      .then((res) => {
+        if (!cancelled) setContent(res.data.memory);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(getErrorMessage(err, "加载记忆内容失败"));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, memoryId]);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="xs">
+          查看
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>记忆内容</DialogTitle>
+        </DialogHeader>
+        <div className="font-mono text-xs break-all text-onSurface-default-tertiary">
+          {memoryId}
+        </div>
+        {loading ? (
+          <p className="text-sm text-onSurface-default-secondary">加载中...</p>
+        ) : error ? (
+          <p className="text-sm text-onSurface-danger-primary">{error}</p>
+        ) : (
+          <p className="text-sm whitespace-pre-wrap text-onSurface-default-primary">
+            {content}
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const memoryIdCell = (value: string) => (
-  <span className="font-mono text-xs line-clamp-1">{value}</span>
+  <span className="flex items-center gap-1 font-mono text-xs">
+    <span className="min-w-0 flex-1 truncate">{value}</span>
+    <MemoryViewer memoryId={value} />
+  </span>
 );
 
 function Panel({
