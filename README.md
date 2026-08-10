@@ -387,7 +387,7 @@ MEM0_DECAY_HALF_LIFE_DAYS=30        # 基准半衰期
 
 ### 显式反馈闭环
 
-记忆系统支持**显式反馈闭环**：对话层捕获用户纠正信号后，通过 `POST /evolve/feedback` 直接调整对应记忆的热度（salience）分（useful +0.1 / useless -0.15 / correction -0.05，clamp 到 [0.05, 1.0]），只改热度不改记忆内容。反馈可审计（evolve_feedback / evolve_salience_adjustments 落库），误报可逆。详见 `docs/evolve-observability-plan.md`。
+记忆系统支持**显式反馈闭环**：对话层捕获用户纠正信号后，通过 `POST /evolve/feedback` 直接调整对应记忆的热度（salience）分（useful +0.1 / useless -0.15 / correction -0.05，clamp 到 [0.05, 1.0]），只改热度不改记忆内容。反馈可审计（evolve_feedback / evolve_salience_adjustments 落库），误报可逆。
 
 ### cron 过期清理
 

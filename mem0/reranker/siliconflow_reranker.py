@@ -12,9 +12,10 @@ from mem0.reranker.base import BaseReranker
 logger = logging.getLogger(__name__)
 
 # SiliconFlow rerank API 的 query+documents 共享上下文限制（默认适应 BAAI/bge-reranker-v2-m3 的 8K token）。
+# 实测该模型 query 上限在 6000~8000 字符之间（8000 触发 "Query is too long"），6000 为安全值。
 # 换用更大上下文的模型时，通过环境变量调高：
 #   MEM0_RERANK_QUERY_MAX_CHARS=16000  MEM0_RERANK_DOCS_MAX_CHARS=16000
-_RERANK_QUERY_MAX_CHARS_DEFAULT = 4000
+_RERANK_QUERY_MAX_CHARS_DEFAULT = 6000
 _RERANK_DOCS_MAX_CHARS_DEFAULT = 6000
 # 可重试的 HTTP 状态码（429 限流 / 500-503 服务端临时错误）
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
