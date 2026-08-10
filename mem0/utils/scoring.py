@@ -65,7 +65,7 @@ def score_and_rank(
     top_k: int,
     explain: bool = False,
     decay_fn: Optional[Callable[[Dict], float]] = None,
-    salience_scores: Optional[Dict[str, float]] = None,
+    salience_scores: Optional[Dict[str, Dict[str, float]]] = None,
     salience_rank_weight: float = 0.0,
 ) -> List[Dict[str, Any]]:
     """Score candidates additively and return top-k results.
@@ -94,8 +94,11 @@ def score_and_rank(
         threshold: Minimum semantic score required before hybrid scoring.
         top_k: Maximum number of results to return.
         explain: Include score_details in each result when true.
-        salience_scores: Optional heat_s (min(access_count/100, 1)) keyed by
-            memory ID. Only applied when non-empty.
+        salience_scores: Optional {id: {"acc": access_count, "sal":
+            salience_score}} keyed by memory ID. heat_effective =
+            min(acc/100, 1) + (sal - 1); sal defaults to 1.0 so the offset is
+            zero unless feedback demoted/promoted the memory. Only applied
+            when non-empty.
         salience_rank_weight: Multiplicative weight for the salience boost;
             default 0 keeps ordering identical to current behavior.
 
@@ -134,17 +137,25 @@ def score_and_rank(
         raw_combined = decayed_semantic + bm25_score + entity_boost
         combined = min(raw_combined / max_possible, 1.0)
 
-        # Salience (usage frequency) is an opt-in multiplicative boost: final =
-        # combined x (1 + weight x heat_s). Decay governs time, salience governs
-        # frequency; they never stack into double decay. weight defaults to 0,
-        # so ordering is byte-for-byte identical to current behavior.
+        # Salience (usage frequency + feedback) is an opt-in multiplicative
+        # boost: final = combined x (1 + weight x heat_effective), where
+        # heat_effective = min(acc/100, 1) + (sal - 1). sal defaults to 1.0 so
+        # a default-salience memory keeps the offset at zero; feedback demotion
+        # (sal < 1) drags the memory down, promotion (sal > 1) lifts it. Decay
+        # governs time, salience governs frequency; they never stack into
+        # double decay. weight defaults to 0, so ordering is byte-for-byte
+        # identical to current behavior.
         salience_active = bool(salience_scores)
         heat_s = 0.0
+        salience_score = 1.0
         salience_boost = 1.0
         if salience_active:
-            heat_s = salience_scores.get(mem_id_str, 0.0)
-            salience_boost = 1.0 + salience_rank_weight * heat_s
-        combined = combined * salience_boost
+            _sal = salience_scores.get(mem_id_str)
+            if _sal:
+                salience_score = _sal.get("sal", 1.0)
+                heat_s = min(_sal.get("acc", 0) / 100.0, 1.0) + (salience_score - 1.0)
+                salience_boost = 1.0 + salience_rank_weight * heat_s
+            combined = combined * salience_boost
 
         scored_result = {
             "id": mem_id_str,
@@ -167,6 +178,7 @@ def score_and_rank(
                 score_details.update(
                     {
                         "salience_heat": heat_s,
+                        "salience_score": salience_score,
                         "salience_rank_weight": salience_rank_weight,
                         "salience_boost": salience_boost,
                     }

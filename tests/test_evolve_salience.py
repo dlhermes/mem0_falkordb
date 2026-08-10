@@ -151,7 +151,10 @@ class TestSalienceRankBoost:
         base = score_and_rank(results, {}, {}, threshold=0.1, top_k=10)
         boosted = score_and_rank(
             results, {}, {}, threshold=0.1, top_k=10,
-            salience_scores={"a": 1.0, "b": 0.5}, salience_rank_weight=0.0,
+            salience_scores={
+                "a": {"acc": 100, "sal": 1.0}, "b": {"acc": 50, "sal": 1.0},
+            },
+            salience_rank_weight=0.0,
         )
         assert [r["id"] for r in boosted] == [r["id"] for r in base]
         assert [r["score"] for r in boosted] == pytest.approx([r["score"] for r in base])
@@ -165,7 +168,8 @@ class TestSalienceRankBoost:
         ]
         scored = score_and_rank(
             results, {}, {}, threshold=0.1, top_k=10,
-            salience_scores={"hot": 1.0}, salience_rank_weight=0.0,
+            salience_scores={"hot": {"acc": 100, "sal": 1.0}},
+            salience_rank_weight=0.0,
         )
         assert [r["id"] for r in scored] == ["cold", "hot"]
 
@@ -176,14 +180,40 @@ class TestSalienceRankBoost:
             {"id": "cold", "score": 0.9, "payload": {"data": "mem a"}},
             {"id": "hot", "score": 0.8, "payload": {"data": "mem b"}},
         ]
-        # heat_s (min(access_count/100, 1)) is computed by the caller; hot is max heat.
+        # heat_effective (min(acc/100, 1) + (sal - 1)) is computed in
+        # score_and_rank; hot is max heat with default salience.
         scored = score_and_rank(
             results, {}, {}, threshold=0.1, top_k=10,
-            salience_scores={"hot": 1.0, "cold": 0.0}, salience_rank_weight=0.5,
+            salience_scores={
+                "hot": {"acc": 100, "sal": 1.0},
+                "cold": {"acc": 0, "sal": 1.0},
+            },
+            salience_rank_weight=0.5,
         )
         assert [r["id"] for r in scored] == ["hot", "cold"]
         assert scored[0]["score"] == pytest.approx(0.8 * (1 + 0.5 * 1.0))
         assert scored[1]["score"] == pytest.approx(0.9)
+
+    def test_feedback_downweighted_memory_ranks_lower(self):
+        from mem0.utils.scoring import score_and_rank
+
+        results = [
+            {"id": "neutral", "score": 0.8, "payload": {"data": "mem a"}},
+            {"id": "demoted", "score": 0.8, "payload": {"data": "mem b"}},
+        ]
+        # useless feedback -> salience_score 0.85 gives a negative offset
+        # (0.85 - 1.0), so the demoted memory must rank behind the neutral one.
+        scored = score_and_rank(
+            results, {}, {}, threshold=0.1, top_k=10,
+            salience_scores={
+                "neutral": {"acc": 0, "sal": 1.0},
+                "demoted": {"acc": 0, "sal": 0.85},
+            },
+            salience_rank_weight=0.5,
+        )
+        assert [r["id"] for r in scored] == ["neutral", "demoted"]
+        assert scored[1]["score"] == pytest.approx(0.8 * (1 + 0.5 * (0.85 - 1.0)))
+        assert scored[0]["score"] == pytest.approx(0.8)
 
     def test_explain_reports_salience_factors_when_active(self):
         from mem0.utils.scoring import score_and_rank
@@ -191,10 +221,12 @@ class TestSalienceRankBoost:
         results = [{"id": "a", "score": 0.8, "payload": {"data": "mem a"}}]
         scored = score_and_rank(
             results, {}, {}, threshold=0.1, top_k=10, explain=True,
-            salience_scores={"a": 1.0}, salience_rank_weight=0.5,
+            salience_scores={"a": {"acc": 100, "sal": 1.0}},
+            salience_rank_weight=0.5,
         )
         details = scored[0]["score_details"]
         assert details["salience_heat"] == 1.0
+        assert details["salience_score"] == 1.0
         assert details["salience_rank_weight"] == 0.5
         assert details["salience_boost"] == pytest.approx(1.5)
         assert scored[0]["score"] == pytest.approx(0.8 * 1.5)

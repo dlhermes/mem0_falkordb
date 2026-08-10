@@ -2297,22 +2297,18 @@ class Memory(MemoryBase):
             _decay_fn = None
 
         # Step 8: Score and rank
-        # Opt-in salience (usage frequency) boost: MEM0_EVOLVE_RANK_WEIGHT>0
-        # multiplies combined score by (1 + weight x heat_s), heat_s from the
-        # server-provided access_count lookup. Weight 0 (default) = no lookup,
-        # ordering identical to current behavior.
+        # Opt-in salience (usage frequency + feedback) boost:
+        # MEM0_EVOLVE_RANK_WEIGHT>0 multiplies combined score by
+        # (1 + weight x heat_effective); the server provider returns
+        # {id: {"acc": access_count, "sal": salience_score}}. Weight 0
+        # (default) = no lookup, ordering identical to current behavior.
         _rank_weight = float(os.environ.get("MEM0_EVOLVE_RANK_WEIGHT", "0"))
         _salience_scores = {}
         if _rank_weight > 0 and candidates:
             _provider = getattr(self, "salience_provider", None)
             if _provider is not None:
                 try:
-                    _counts = _provider([c["id"] for c in candidates]) or {}
-                    _salience_scores = {
-                        str(mem_id): min(int(count) / 100.0, 1.0)
-                        for mem_id, count in _counts.items()
-                        if count
-                    }
+                    _salience_scores = _provider([c["id"] for c in candidates]) or {}
                 except Exception as e:
                     logger.warning(f"Salience rank lookup failed: {e}")
 
@@ -4423,22 +4419,18 @@ class AsyncMemory(MemoryBase):
             _decay_fn = None
 
         # Step 8: Score and rank
-        # Opt-in salience (usage frequency) boost: MEM0_EVOLVE_RANK_WEIGHT>0
-        # multiplies combined score by (1 + weight x heat_s), heat_s from the
-        # server-provided access_count lookup. Weight 0 (default) = no lookup,
-        # ordering identical to current behavior.
+        # Opt-in salience (usage frequency + feedback) boost:
+        # MEM0_EVOLVE_RANK_WEIGHT>0 multiplies combined score by
+        # (1 + weight x heat_effective); the server provider returns
+        # {id: {"acc": access_count, "sal": salience_score}}. Weight 0
+        # (default) = no lookup, ordering identical to current behavior.
         _rank_weight = float(os.environ.get("MEM0_EVOLVE_RANK_WEIGHT", "0"))
         _salience_scores = {}
         if _rank_weight > 0 and candidates:
             _provider = getattr(self, "salience_provider", None)
             if _provider is not None:
                 try:
-                    _counts = _provider([c["id"] for c in candidates]) or {}
-                    _salience_scores = {
-                        str(mem_id): min(int(count) / 100.0, 1.0)
-                        for mem_id, count in _counts.items()
-                        if count
-                    }
+                    _salience_scores = _provider([c["id"] for c in candidates]) or {}
                 except Exception as e:
                     logger.warning(f"Salience rank lookup failed: {e}")
 

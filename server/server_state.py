@@ -105,7 +105,10 @@ def _attach_salience_provider(memory: Memory) -> Memory:
             rows = session.scalars(
                 select(EvolveSalience).where(EvolveSalience.memory_id.in_(memory_ids))
             ).all()
-            return {r.memory_id: r.access_count or 0 for r in rows}
+            return {
+                r.memory_id: {"acc": r.access_count or 0, "sal": r.salience_score or 1.0}
+                for r in rows
+            }
         finally:
             session.close()
 
