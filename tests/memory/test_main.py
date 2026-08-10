@@ -1133,9 +1133,9 @@ class TestSemanticMergeUpdate:
 
     def test_sync_update_preserves_old_details_and_merges_new(self, mocker):
         memory = self._memory_with_existing(
-            mocker, {"data": "服务部署在 10.200.1.163，API 端口 8888，前端端口 3002"}
+            mocker, {"data": "服务部署在 192.0.2.163，API 端口 8888，前端端口 3002"}
         )
-        merged = "服务部署在 10.200.1.163，API 端口 8888，前端端口 3002，后端使用 pgvector"
+        merged = "服务部署在 192.0.2.163，API 端口 8888，前端端口 3002，后端使用 pgvector"
         memory.llm.generate_response.side_effect = [self._update_extraction(), merged]
 
         result = memory._add_to_vector_store(
@@ -1147,13 +1147,13 @@ class TestSemanticMergeUpdate:
         assert payload["data"] == merged
         assert memory.vector_store.insert.call_args.kwargs["ids"][0] == "uuid-1"
         merge_messages = memory.llm.generate_response.call_args_list[1].kwargs["messages"]
-        assert "10.200.1.163" in merge_messages[1]["content"]
+        assert "192.0.2.163" in merge_messages[1]["content"]
         assert "后端使用 pgvector" in merge_messages[1]["content"]
         assert result == []
 
     def test_sync_update_contradiction_new_value_wins(self, mocker):
-        memory = self._memory_with_existing(mocker, {"data": "服务部署在 10.200.1.163，API 端口 8888"})
-        merged = "服务部署在 10.200.1.163，API 端口 9999"
+        memory = self._memory_with_existing(mocker, {"data": "服务部署在 192.0.2.163，API 端口 8888"})
+        merged = "服务部署在 192.0.2.163，API 端口 9999"
         memory.llm.generate_response.side_effect = [self._update_extraction(), merged]
 
         memory._add_to_vector_store(
@@ -1164,7 +1164,7 @@ class TestSemanticMergeUpdate:
         assert payload["data"] == merged
 
     def test_sync_update_merge_exception_falls_back(self, mocker, caplog):
-        memory = self._memory_with_existing(mocker, {"data": "服务部署在 10.200.1.163，API 端口 8888"})
+        memory = self._memory_with_existing(mocker, {"data": "服务部署在 192.0.2.163，API 端口 8888"})
         new_text = "后端使用 pgvector"
         memory.llm.generate_response.side_effect = [self._update_extraction(new_text), TimeoutError("timeout")]
 
@@ -1193,9 +1193,9 @@ class TestSemanticMergeUpdate:
     @pytest.mark.asyncio
     async def test_async_update_preserves_old_details_and_merges_new(self, mocker):
         memory = self._memory_with_existing(
-            mocker, {"data": "服务部署在 10.200.1.163，API 端口 8888，前端端口 3002"}, AsyncMemory
+            mocker, {"data": "服务部署在 192.0.2.163，API 端口 8888，前端端口 3002"}, AsyncMemory
         )
-        merged = "服务部署在 10.200.1.163，API 端口 8888，前端端口 3002，后端使用 pgvector"
+        merged = "服务部署在 192.0.2.163，API 端口 8888，前端端口 3002，后端使用 pgvector"
         memory.llm.generate_response.side_effect = [self._update_extraction(), merged]
 
         result = await memory._add_to_vector_store(
@@ -1207,13 +1207,13 @@ class TestSemanticMergeUpdate:
         assert payload["data"] == merged
         assert memory.vector_store.insert.call_args.kwargs["ids"][0] == "uuid-1"
         merge_messages = memory.llm.generate_response.call_args_list[1].kwargs["messages"]
-        assert "10.200.1.163" in merge_messages[1]["content"]
+        assert "192.0.2.163" in merge_messages[1]["content"]
         assert "后端使用 pgvector" in merge_messages[1]["content"]
         assert result == []
 
     @pytest.mark.asyncio
     async def test_async_update_merge_exception_falls_back(self, mocker, caplog):
-        memory = self._memory_with_existing(mocker, {"data": "服务部署在 10.200.1.163，API 端口 8888"}, AsyncMemory)
+        memory = self._memory_with_existing(mocker, {"data": "服务部署在 192.0.2.163，API 端口 8888"}, AsyncMemory)
         new_text = "后端使用 pgvector"
         memory.llm.generate_response.side_effect = [self._update_extraction(new_text), TimeoutError("timeout")]
 

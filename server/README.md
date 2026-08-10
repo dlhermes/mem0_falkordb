@@ -538,7 +538,7 @@ LLM 未输出 `importance` 时按关键词自动判断（Phase 2.6，sync/async 
 
 ## 图碎片方案 C（图关联补充召回，v2 重构后）
 
-图搜索返回的实体关系碎片（如「发哥 部署于 10.200.1.163」）**参与 rerank 竞争**，与向量结果统一由 reranker 按 query 相关性打分排序：
+图搜索返回的实体关系碎片（如「发哥 部署于 192.0.2.163」）**参与 rerank 竞争**，与向量结果统一由 reranker 按 query 相关性打分排序：
 
 - **关系类型存储**：纯中文关系类型经 backtick 转义直接写入（`部署于`、`偏好`），不再映射英文（909705c 的 52 条中文→英文映射表已删除，见 `mem0/memory/utils.py` `sanitize_relationship_for_cypher`）
 - **召回通道**：
