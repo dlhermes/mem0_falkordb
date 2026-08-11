@@ -71,6 +71,7 @@ function MemoryViewer({ memoryId }: { memoryId: string }) {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -78,10 +79,16 @@ function MemoryViewer({ memoryId }: { memoryId: string }) {
     setLoading(true);
     setError("");
     setContent("");
+    setNotFound(false);
     api
       .get<Memory>(MEMORY_ENDPOINTS.BY_ID(memoryId))
       .then((res) => {
-        if (!cancelled) setContent(res.data.memory);
+        if (cancelled) return;
+        if (res.data === null) {
+          setNotFound(true);
+        } else {
+          setContent(res.data.memory);
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(getErrorMessage(err, "加载记忆内容失败"));
@@ -101,7 +108,7 @@ function MemoryViewer({ memoryId }: { memoryId: string }) {
           查看
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-xl max-h-[75vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>记忆内容</DialogTitle>
         </DialogHeader>
@@ -112,6 +119,10 @@ function MemoryViewer({ memoryId }: { memoryId: string }) {
           <p className="text-sm text-onSurface-default-secondary">加载中...</p>
         ) : error ? (
           <p className="text-sm text-onSurface-danger-primary">{error}</p>
+        ) : notFound ? (
+          <p className="text-sm text-onSurface-default-secondary">
+            该记忆内容不存在（可能已被清理）
+          </p>
         ) : (
           <p className="text-sm whitespace-pre-wrap text-onSurface-default-primary">
             {content}
