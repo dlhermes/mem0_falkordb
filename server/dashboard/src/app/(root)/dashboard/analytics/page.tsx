@@ -117,7 +117,9 @@ function MemoryViewer({ memoryId }: { memoryId: string }) {
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto pr-1">
           {loading ? (
-            <p className="text-sm text-onSurface-default-secondary">加载中...</p>
+            <p className="text-sm text-onSurface-default-secondary">
+              加载中...
+            </p>
           ) : error ? (
             <p className="text-sm text-onSurface-danger-primary">{error}</p>
           ) : notFound ? (
