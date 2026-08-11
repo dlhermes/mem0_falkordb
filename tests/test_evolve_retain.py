@@ -27,7 +27,8 @@ if _SERVER_DIR not in sys.path:
 
 from auth import verify_auth  # noqa: E402
 from db import Base, get_db  # noqa: E402
-from models import EvolveSalience, EvolveSalienceAdjustment  # noqa: E402
+from evolve_cleanup import register_delete_cleanup  # noqa: E402
+from models import EvolveFeedback, EvolveSalience, EvolveSalienceAdjustment  # noqa: E402
 
 # main.py builds a real Memory (pgvector → postgres) at import time via
 # initialize_state; stub it out BEFORE importing main so collection succeeds
@@ -36,12 +37,17 @@ import server_state  # noqa: E402
 
 
 class _FakeMemory:
-    def __init__(self, delete_error=None):
+    def __init__(self, session_factory=None, delete_error=None):
         self._delete_error = delete_error
+        self.on_memory_deleted = None
+        if session_factory is not None:
+            register_delete_cleanup(self, session_factory)
 
     def delete(self, memory_id, **kwargs):
         if self._delete_error:
             raise self._delete_error
+        if self.on_memory_deleted is not None:
+            self.on_memory_deleted(memory_id)
         return True
 
 
@@ -67,7 +73,7 @@ def client():
     # _persist_evolve_* write via main's module-level SessionLocal (postgres in
     # prod); point it at the test DB so rows land in sqlite.
     server_main.SessionLocal = TestingSessionLocal
-    server_main.get_memory_instance = lambda: _FakeMemory()
+    server_main.get_memory_instance = lambda: _FakeMemory(session_factory=TestingSessionLocal)
 
     # Endpoint handlers use get_db (from db.py), not main's SessionLocal, so the
     # dependency must be overridden too.
@@ -147,6 +153,8 @@ def test_delete_memory_cascades_evolve_salience(client):
                 EvolveSalience(memory_id="kept", salience_score=0.9, access_count=5, last_access_at=now),
                 EvolveSalienceAdjustment(memory_id="gone", delta=0.1, reason="evolve_boost", created_at=now),
                 EvolveSalienceAdjustment(memory_id="kept", delta=0.05, reason="evolve_boost", created_at=now),
+                EvolveFeedback(memory_id="gone", feedback_type="useful", created_at=now),
+                EvolveFeedback(memory_id="kept", feedback_type="correction", created_at=now),
             ]
         )
         db.commit()
@@ -160,7 +168,9 @@ def test_delete_memory_cascades_evolve_salience(client):
         assert db.scalar(
             select(EvolveSalienceAdjustment).where(EvolveSalienceAdjustment.memory_id == "gone")
         ) is None
+        assert db.scalar(select(EvolveFeedback).where(EvolveFeedback.memory_id == "gone")) is None
         assert db.get(EvolveSalience, "kept") is not None
         assert db.scalar(
             select(EvolveSalienceAdjustment).where(EvolveSalienceAdjustment.memory_id == "kept")
         ) is not None
+        assert db.scalar(select(EvolveFeedback).where(EvolveFeedback.memory_id == "kept")) is not None

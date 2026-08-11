@@ -116,6 +116,20 @@ def _attach_salience_provider(memory: Memory) -> Memory:
     return memory
 
 
+def _attach_delete_cleanup(memory: Memory) -> Memory:
+    """Wire the evolve_* cascade purge onto memory deletion.
+
+    Any delete path (API delete / delete_all, maintenance scripts) goes
+    through the core-library _delete_memory hook, so registering here covers
+    every entry point that uses this Memory instance.
+    """
+    from evolve_cleanup import register_delete_cleanup
+
+    if _session_factory is not None:
+        register_delete_cleanup(memory, _session_factory)
+    return memory
+
+
 def initialize_state(default_config: Dict[str, Any]) -> None:
     global _current_config, _memory_instance
     with _state_lock:
@@ -126,7 +140,9 @@ def initialize_state(default_config: Dict[str, Any]) -> None:
         overrides = _load_overrides()
         if overrides:
             _current_config = _merge_config(_current_config, overrides)
-        _memory_instance = _attach_salience_provider(Memory.from_config(_current_config))
+        _memory_instance = _attach_delete_cleanup(
+            _attach_salience_provider(Memory.from_config(_current_config))
+        )
 
 
 def update_config(updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -134,7 +150,9 @@ def update_config(updates: Dict[str, Any]) -> Dict[str, Any]:
     with _state_lock:
         next_config = _merge_config(_current_config, updates)
         _current_config = next_config
-        _memory_instance = _attach_salience_provider(Memory.from_config(next_config))
+        _memory_instance = _attach_delete_cleanup(
+            _attach_salience_provider(Memory.from_config(next_config))
+        )
         overrides = _load_overrides()
         overrides = _merge_config(overrides, updates)
         _save_overrides(overrides)

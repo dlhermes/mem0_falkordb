@@ -738,6 +738,7 @@ class Memory(MemoryBase):
 
         # Entity store is initialized lazily on first use
         self._entity_store = None
+        self.on_memory_deleted = None
         self._graph_write_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=int(os.environ.get("MEM0_GRAPH_MAX_WORKERS", "5"))
         )
@@ -2813,6 +2814,19 @@ class Memory(MemoryBase):
 
         return memory_id
 
+    def _notify_memory_deleted(self, memory_id):
+        """Best-effort on_memory_deleted callback.
+
+        A failing callback must never break the delete flow, so exceptions are
+        logged and swallowed. No-op when no callback is registered.
+        """
+        if self.on_memory_deleted is None:
+            return
+        try:
+            self.on_memory_deleted(memory_id)
+        except Exception:
+            logger.exception("on_memory_deleted callback failed for memory %s", memory_id)
+
     def _delete_memory(self, memory_id, existing_memory=None):
         logger.info(f"Deleting memory with {memory_id=}")
         if existing_memory is None:
@@ -2840,6 +2854,8 @@ class Memory(MemoryBase):
         # Entity-store cleanup: strip this memory's id from any entity records
         # that linked to it. Non-fatal — the helper swallows errors.
         self._remove_memory_from_entity_store(memory_id, session_filters)
+
+        self._notify_memory_deleted(memory_id)
 
         return memory_id
 
@@ -2917,6 +2933,7 @@ class AsyncMemory(MemoryBase):
         self._search_depth_cache = OrderedDict()
         self.custom_instructions = self.config.custom_instructions
         self._entity_store = None
+        self.on_memory_deleted = None
         self._graph_write_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=int(os.environ.get("MEM0_GRAPH_MAX_WORKERS", "5"))
         )
@@ -5011,6 +5028,15 @@ class AsyncMemory(MemoryBase):
 
         return memory_id
 
+    def _notify_memory_deleted(self, memory_id):
+        """Best-effort on_memory_deleted callback (async mirror of sync)."""
+        if self.on_memory_deleted is None:
+            return
+        try:
+            self.on_memory_deleted(memory_id)
+        except Exception:
+            logger.exception("on_memory_deleted callback failed for memory %s", memory_id)
+
     async def _delete_memory(self, memory_id, existing_memory=None, skip_entity_cleanup=False):
         logger.info(f"Deleting memory with {memory_id=}")
         if existing_memory is None:
@@ -5039,6 +5065,8 @@ class AsyncMemory(MemoryBase):
 
         if not skip_entity_cleanup:
             await self._remove_memory_from_entity_store(memory_id, session_filters)
+
+        self._notify_memory_deleted(memory_id)
 
         return memory_id
 

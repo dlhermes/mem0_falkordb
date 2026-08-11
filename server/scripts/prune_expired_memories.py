@@ -143,6 +143,14 @@ def main() -> int:
         config["graph_store"] = {"provider": "memory", "config": None}
 
     memory = Memory.from_config(config)
+
+    # Scripts run from /app/scripts/; server modules (evolve_cleanup) live in /app/.
+    _app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _app_dir not in sys.path:
+        sys.path.insert(0, _app_dir)
+    from evolve_cleanup import build_session_factory, register_delete_cleanup
+
+    register_delete_cleanup(memory, build_session_factory(config))
     user_ids = discover_users(memory)
 
     if not user_ids:

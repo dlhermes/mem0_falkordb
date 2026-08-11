@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import telemetry
 from auth import ADMIN_API_KEY, AUTH_DISABLED, JWT_SECRET, hash_password, require_admin, verify_auth
-from db import SessionLocal, get_db
+from db import SessionLocal
 from dotenv import load_dotenv
 from errors import (
     UpstreamError,
@@ -24,7 +24,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from mem0.exceptions import ValidationError as Mem0ValidationError
-from models import EvolveQuery, EvolveSalience, EvolveSalienceAdjustment, RequestLog, User
+from models import EvolveQuery, EvolveSalience, RequestLog, User
 from pydantic import BaseModel, Field
 from rate_limit import limiter
 from routers import api_keys as api_keys_router
@@ -43,7 +43,6 @@ from server_state import (
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 load_dotenv()
 
@@ -711,7 +710,7 @@ def memory_history(memory_id: str, _auth=Depends(verify_auth)):
 
 
 @app.delete("/memories/{memory_id}", summary="Delete a memory", response_model=MessageResponse)
-def delete_memory(memory_id: str, _auth=Depends(verify_auth), db: Session = Depends(get_db)):
+def delete_memory(memory_id: str, _auth=Depends(verify_auth)):
     """Delete a specific memory by ID."""
     try:
         get_memory_instance().delete(memory_id=memory_id)
@@ -720,26 +719,7 @@ def delete_memory(memory_id: str, _auth=Depends(verify_auth), db: Session = Depe
     except Exception:
         raise upstream_error()
 
-    _purge_evolve_salience(db, memory_id)
-
     return MessageResponse(message="Memory deleted successfully")
-
-
-def _purge_evolve_salience(db: Session, memory_id: str) -> None:
-    """Best-effort cascade: drop evolve rows for a deleted memory.
-
-    A failed cleanup must never fail the delete request, so errors are
-    logged and swallowed (mirrors _persist_evolve_query's fault tolerance).
-    """
-    try:
-        db.query(EvolveSalience).filter(EvolveSalience.memory_id == memory_id).delete()
-        db.query(EvolveSalienceAdjustment).filter(
-            EvolveSalienceAdjustment.memory_id == memory_id
-        ).delete()
-        db.commit()
-    except Exception:
-        db.rollback()
-        logging.exception("Failed to purge evolve salience for memory %s", memory_id)
 
 
 @app.delete("/memories", summary="Delete all memories", response_model=MessageResponse)
