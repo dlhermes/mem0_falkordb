@@ -211,7 +211,7 @@ export default function MemoriesPage() {
                 <Label className="text-xs text-onSurface-default-tertiary">
                   内容
                 </Label>
-                <p className="text-sm">{selectedMemory.memory}</p>
+                <p className="text-sm whitespace-pre-wrap break-words">{selectedMemory.memory}</p>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">

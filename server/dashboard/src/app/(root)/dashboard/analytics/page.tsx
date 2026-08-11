@@ -108,26 +108,28 @@ function MemoryViewer({ memoryId }: { memoryId: string }) {
           查看
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-xl max-h-[75vh] overflow-y-auto">
+      <DialogContent className="w-[min(36rem,92vw)] h-[min(70vh,40rem)] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>记忆内容</DialogTitle>
         </DialogHeader>
         <div className="font-mono text-xs break-all text-onSurface-default-tertiary">
           {memoryId}
         </div>
-        {loading ? (
-          <p className="text-sm text-onSurface-default-secondary">加载中...</p>
-        ) : error ? (
-          <p className="text-sm text-onSurface-danger-primary">{error}</p>
-        ) : notFound ? (
-          <p className="text-sm text-onSurface-default-secondary">
-            该记忆内容不存在（可能已被清理）
-          </p>
-        ) : (
-          <p className="text-sm whitespace-pre-wrap text-onSurface-default-primary">
-            {content}
-          </p>
-        )}
+        <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+          {loading ? (
+            <p className="text-sm text-onSurface-default-secondary">加载中...</p>
+          ) : error ? (
+            <p className="text-sm text-onSurface-danger-primary">{error}</p>
+          ) : notFound ? (
+            <p className="text-sm text-onSurface-default-secondary">
+              该记忆内容不存在（可能已被清理）
+            </p>
+          ) : (
+            <p className="text-sm whitespace-pre-wrap break-words text-onSurface-default-primary">
+              {content}
+            </p>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
