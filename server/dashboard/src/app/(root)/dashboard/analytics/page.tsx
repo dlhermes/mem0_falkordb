@@ -108,7 +108,7 @@ function MemoryViewer({ memoryId }: { memoryId: string }) {
           查看
         </Button>
       </DialogTrigger>
-      <DialogContent className="w-[min(36rem,92vw)] h-[min(70vh,40rem)] flex flex-col overflow-hidden">
+      <DialogContent className="w-[min(36rem,92vw)] max-h-[min(70vh,40rem)] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>记忆内容</DialogTitle>
         </DialogHeader>
