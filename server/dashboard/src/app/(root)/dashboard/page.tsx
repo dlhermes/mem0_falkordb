@@ -16,7 +16,7 @@ import {
   ENTITY_ENDPOINTS,
 } from "@/utils/api-endpoints";
 import { useApiQuery } from "@/hooks/use-api-query";
-import { ApiRequestLog, Entity, Memory } from "@/types/api";
+import { ApiRequestLog, ApiRequestLogList, Entity, Memory } from "@/types/api";
 
 // Keep in sync with ALL_MEMORIES_LIMIT in server/main.py.
 const MEMORY_FETCH_LIMIT = 1000;
@@ -86,7 +86,7 @@ export default function DashboardPage() {
           params: { top_k: MEMORY_FETCH_LIMIT },
         }),
         api.get<Entity[]>(ENTITY_ENDPOINTS.BASE),
-        api.get<ApiRequestLog[]>(REQUEST_ENDPOINTS.BASE, {
+        api.get<ApiRequestLogList>(REQUEST_ENDPOINTS.BASE, {
           params: { limit: REQUEST_LOG_LIMIT },
         }),
       ]);
@@ -94,7 +94,7 @@ export default function DashboardPage() {
       return {
         memories: Array.isArray(rawMemories) ? rawMemories : [],
         entities: entitiesRes.data ?? [],
-        requests: (requestsRes.data ?? []).map(normalizeLog),
+        requests: (requestsRes.data?.items ?? []).map(normalizeLog),
       };
     },
     {
