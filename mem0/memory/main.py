@@ -1459,37 +1459,35 @@ class Memory(MemoryBase):
                 continue
             if event in ("DELETE", "UPDATE"):
                 real_id = uuid_mapping.get(mem.get("id"))
-                if real_id:
+                if not real_id:
+                    continue
+                if event == "DELETE":
+                    # Cascade delete via _delete_memory: entity cleanup + correct
+                    # history (old_memory=original text) + on_memory_deleted hook.
                     delete_ids.append(str(real_id))
-                    if event == "DELETE":
-                        # Log deletion to history
+                elif event == "UPDATE":
+                    # Semantic merge: preserve still-valid old details, merge new facts
+                    old_text = old_text_by_id.get(str(real_id), "")
+                    merged_text = _semantic_merge_text(self.llm, old_text, text)
+                    if merged_text in embed_map:
+                        merged_embedding = embed_map[merged_text]
+                    else:
                         try:
-                            self.db.add_history(str(real_id), text, None, "DELETE", created_at=datetime.now(timezone.utc).isoformat())
+                            merged_embedding = self.embedding_model.embed(merged_text, "add")
                         except Exception as e:
-                            logger.warning(f"Failed to log DELETE history for {real_id}: {e}")
-                    elif event == "UPDATE":
-                        # Semantic merge: preserve still-valid old details, merge new facts
-                        old_text = old_text_by_id.get(str(real_id), "")
-                        merged_text = _semantic_merge_text(self.llm, old_text, text)
-                        if merged_text in embed_map:
-                            merged_embedding = embed_map[merged_text]
-                        else:
-                            try:
-                                merged_embedding = self.embedding_model.embed(merged_text, "add")
-                            except Exception as e:
-                                logger.warning(f"Failed to embed merged update text, using extracted embedding: {e}")
-                                merged_embedding = embed_map[text]
-                        # Schedule re-insert with merged text
-                        mem_metadata_update = deepcopy(metadata)
-                        mem_metadata_update["data"] = merged_text
-                        mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
-                        mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
-                        mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
-                        llm_meta = mem.get("metadata") or {}
-                        for k in ("temporal", "temporal_date", "importance", "lane"):
-                            if k in llm_meta:
-                                mem_metadata_update[k] = llm_meta[k]
-                        update_records.append((str(real_id), merged_text, merged_embedding, mem_metadata_update))
+                            logger.warning(f"Failed to embed merged update text, using extracted embedding: {e}")
+                            merged_embedding = embed_map[text]
+                    # Schedule re-insert with merged text
+                    mem_metadata_update = deepcopy(metadata)
+                    mem_metadata_update["data"] = merged_text
+                    mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
+                    mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
+                    mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    llm_meta = mem.get("metadata") or {}
+                    for k in ("temporal", "temporal_date", "importance", "lane"):
+                        if k in llm_meta:
+                            mem_metadata_update[k] = llm_meta[k]
+                    update_records.append((str(real_id), merged_text, merged_embedding, mem_metadata_update))
                 continue  # DELETE done; UPDATE handled via delete + re-insert below
 
             # ADD (default) — current logic
@@ -1528,7 +1526,7 @@ class Memory(MemoryBase):
         if delete_ids:
             for did in delete_ids:
                 try:
-                    self.vector_store.delete(vector_id=did)
+                    self._delete_memory(did)
                 except Exception as e:
                     logger.warning(f"Failed to delete memory {did}: {e}")
         if update_records:
@@ -3634,39 +3632,36 @@ class AsyncMemory(MemoryBase):
                 continue
             if event in ("DELETE", "UPDATE"):
                 real_id = uuid_mapping.get(mem.get("id"))
-                if real_id:
+                if not real_id:
+                    continue
+                if event == "DELETE":
+                    # Cascade delete via _delete_memory: entity cleanup + correct
+                    # history (old_memory=original text) + on_memory_deleted hook.
                     delete_ids.append(str(real_id))
-                    if event == "DELETE":
+                elif event == "UPDATE":
+                    # Semantic merge: preserve still-valid old details, merge new facts
+                    old_text = old_text_by_id.get(str(real_id), "")
+                    merged_text = await asyncio.to_thread(_semantic_merge_text, self.llm, old_text, text)
+                    if merged_text in embed_map:
+                        merged_embedding = embed_map[merged_text]
+                    else:
                         try:
-                            await asyncio.to_thread(
-                                self.db.add_history, str(real_id), text, None, "DELETE"
+                            merged_embedding = await asyncio.to_thread(
+                                self.embedding_model.embed, merged_text, "add"
                             )
                         except Exception as e:
-                            logger.warning(f"Failed to log DELETE history for {real_id}: {e}")
-                    elif event == "UPDATE":
-                        # Semantic merge: preserve still-valid old details, merge new facts
-                        old_text = old_text_by_id.get(str(real_id), "")
-                        merged_text = await asyncio.to_thread(_semantic_merge_text, self.llm, old_text, text)
-                        if merged_text in embed_map:
-                            merged_embedding = embed_map[merged_text]
-                        else:
-                            try:
-                                merged_embedding = await asyncio.to_thread(
-                                    self.embedding_model.embed, merged_text, "add"
-                                )
-                            except Exception as e:
-                                logger.warning(f"Failed to embed merged update text, using extracted embedding: {e}")
-                                merged_embedding = embed_map[text]
-                        mem_metadata_update = deepcopy(metadata)
-                        mem_metadata_update["data"] = merged_text
-                        mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
-                        mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
-                        mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
-                        llm_meta = mem.get("metadata") or {}
-                        for k in ("temporal", "temporal_date", "importance", "lane"):
-                            if k in llm_meta:
-                                mem_metadata_update[k] = llm_meta[k]
-                        update_records.append((str(real_id), merged_text, merged_embedding, mem_metadata_update))
+                            logger.warning(f"Failed to embed merged update text, using extracted embedding: {e}")
+                            merged_embedding = embed_map[text]
+                    mem_metadata_update = deepcopy(metadata)
+                    mem_metadata_update["data"] = merged_text
+                    mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
+                    mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
+                    mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    llm_meta = mem.get("metadata") or {}
+                    for k in ("temporal", "temporal_date", "importance", "lane"):
+                        if k in llm_meta:
+                            mem_metadata_update[k] = llm_meta[k]
+                    update_records.append((str(real_id), merged_text, merged_embedding, mem_metadata_update))
                 continue
 
             # ADD (default)
@@ -3705,7 +3700,7 @@ class AsyncMemory(MemoryBase):
         if delete_ids:
             for did in delete_ids:
                 try:
-                    await asyncio.to_thread(self.vector_store.delete, vector_id=did)
+                    await self._delete_memory(did)
                 except Exception as e:
                     logger.warning(f"Failed to delete memory (async) {did}: {e}")
         if update_records:
