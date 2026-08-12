@@ -335,7 +335,7 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 | 配置 | LLM / 嵌入 / 重排序 / 图数据存储独立配置（provider、model、API Key、Base URL）+ 检索参数（深度检索、车道、重排阈值）+ 提取指令编辑，**保存即热生效** |
 | 设置 | 深色/浅色主题切换、修改密码、实例信息（当前模型与存储后端）、**深度路由词汇管理**（minimal/standard/full 三级词汇增删，命中即路由，无需重启） |
 
-界面预览（演示数据）：
+管理后台仪表盘（记忆内容已脱敏模糊）：
 
 ![仪表盘预览](docs/screenshots/dashboard-preview.png)
 
@@ -387,6 +387,7 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 | mem0-prune-expired-memories | 04:00 | 过期记忆 + FalkorDB 孤立节点清理 |
 | mem0-dedup-memories | 05:00 | 语义去重 |
 | mem0-evolve-cycle | 06:00 | 进化循环（高频提权/零命中/未召回清单） |
+| mem0-prune-evolve-orphans | 06:20 | evolve 孤儿清理（记忆本体已删的 salience/feedback/adjustments 残留） |
 
 所有脚本支持 dry-run 环境变量（`PRUNE_DRY_RUN=true` / `CONSOLIDATION_DRY_RUN=true` / `EVOLVE_DRY_RUN=true`），watchdog 模式：无动作静默，有动作才输出。
 
