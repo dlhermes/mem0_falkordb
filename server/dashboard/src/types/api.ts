@@ -50,6 +50,11 @@ export interface ApiRequestLog {
   auth_type: string;
 }
 
+export interface ApiRequestLogList {
+  items: ApiRequestLog[];
+  total: number;
+}
+
 export type EntityType = "user" | "agent" | "run";
 
 export interface Entity {

@@ -28,7 +28,7 @@ import CopyButton from "@/components/misc/copy-button";
 import { api } from "@/utils/api";
 import { REQUEST_ENDPOINTS } from "@/utils/api-endpoints";
 import { useApiQuery } from "@/hooks/use-api-query";
-import { ApiRequestLog } from "@/types/api";
+import { ApiRequestLog, ApiRequestLogList } from "@/types/api";
 
 type RequestLog = {
   id: string;
@@ -123,21 +123,19 @@ export default function RequestsPage() {
   const [timeFilter, setTimeFilter] = useState("all");
   const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
 
-  const {
-    data: logs = [],
-    isLoading,
-    error,
-    refetch,
-  } = useApiQuery<RequestLog[]>(
+  const { data, isLoading, error, refetch } = useApiQuery<ApiRequestLogList>(
     async () => {
-      const res = await api.get<ApiRequestLog[]>(REQUEST_ENDPOINTS.BASE, {
+      const res = await api.get<ApiRequestLogList>(REQUEST_ENDPOINTS.BASE, {
         params: { limit: REQUEST_LOG_LIMIT },
       });
       setLastUpdated(new Date().toISOString());
-      return (res.data ?? []).map(normalizeLog);
+      return res.data ?? { items: [], total: 0 };
     },
-    { errorToast: "加载请求日志失败", initialData: [] },
+    { errorToast: "加载请求日志失败", initialData: { items: [], total: 0 } },
   );
+
+  const logs = useMemo(() => (data?.items ?? []).map(normalizeLog), [data]);
+  const totalRequests = data?.total ?? 0;
 
   const methodOptions = useMemo(() => {
     const methods = new Set(logs.map((log) => log.method.toUpperCase()));
@@ -163,19 +161,17 @@ export default function RequestsPage() {
     });
   }, [logs, methodFilter, statusFilter, timeFilter]);
 
-  const totalRequests = filteredLogs.length;
+  const windowCount = filteredLogs.length;
   const successfulRequests = filteredLogs.filter(
     (log) => log.statusCode < 400,
   ).length;
   const successRate =
-    totalRequests > 0
-      ? Math.round((successfulRequests / totalRequests) * 100)
-      : 0;
+    windowCount > 0 ? Math.round((successfulRequests / windowCount) * 100) : 0;
   const averageLatency =
-    totalRequests > 0
+    windowCount > 0
       ? Math.round(
           filteredLogs.reduce((sum, log) => sum + log.latencyMs, 0) /
-            totalRequests,
+            windowCount,
         )
       : 0;
 
@@ -265,11 +261,11 @@ export default function RequestsPage() {
           { label: "总请求数", value: totalRequests },
           {
             label: "成功率",
-            value: totalRequests > 0 ? `${successRate}%` : "--",
+            value: windowCount > 0 ? `${successRate}%` : "--",
           },
           {
             label: "平均延迟",
-            value: totalRequests > 0 ? `${averageLatency} ms` : "--",
+            value: windowCount > 0 ? `${averageLatency} ms` : "--",
           },
         ].map((card) => (
           <Card
@@ -391,6 +387,10 @@ export default function RequestsPage() {
               onRowClick={(row) => setSelectedLog(row)}
             />
           </Card>
+          <p className="mt-2 text-xs text-onSurface-default-tertiary">
+            仅显示最近 {REQUEST_LOG_LIMIT} 条请求日志（完整记录共{" "}
+            {totalRequests} 条）。
+          </p>
           {filteredLogs.length > PAGE_SIZE && (
             <div className="flex items-center justify-between text-sm text-onSurface-default-tertiary">
               <span>

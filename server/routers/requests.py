@@ -6,7 +6,7 @@ from db import get_db
 from fastapi import APIRouter, Depends, Query
 from models import RequestLog
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/requests", tags=["requests"])
@@ -24,10 +24,15 @@ class RequestLogItem(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RequestLogListResponse(BaseModel):
+    items: list[RequestLogItem]
+    total: int
+
+
 API_KEY_AUTH_TYPES = ("api_key", "admin_api_key")
 
 
-@router.get("", response_model=list[RequestLogItem])
+@router.get("", response_model=RequestLogListResponse)
 def list_requests(
     _auth=Depends(require_admin),
     db: Session = Depends(get_db),
@@ -43,4 +48,9 @@ def list_requests(
         .scalars()
         .all()
     )
-    return logs
+    total = db.execute(
+        select(func.count())
+        .select_from(RequestLog)
+        .where(RequestLog.auth_type.in_(API_KEY_AUTH_TYPES))
+    ).scalar_one()
+    return {"items": logs, "total": total}
