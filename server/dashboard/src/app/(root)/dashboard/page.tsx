@@ -36,6 +36,7 @@ type DashboardData = {
   memories: Memory[];
   entities: Entity[];
   requests: RequestLog[];
+  totalRequests: number;
 };
 
 const getStatusBadge = (
@@ -95,26 +96,27 @@ export default function DashboardPage() {
         memories: Array.isArray(rawMemories) ? rawMemories : [],
         entities: entitiesRes.data ?? [],
         requests: (requestsRes.data?.items ?? []).map(normalizeLog),
+        totalRequests: requestsRes.data?.total ?? 0,
       };
     },
     {
       errorToast: "加载仪表盘数据失败",
-      initialData: { memories: [], entities: [], requests: [] },
+      initialData: { memories: [], entities: [], requests: [], totalRequests: 0 },
     },
   );
 
-  const { memories = [], entities = [], requests = [] } = data ?? {};
+  const { memories = [], entities = [], requests = [], totalRequests = requests.length } = data ?? {};
 
-  const totalRequests = requests.length;
+  const windowCount = requests.length;
   const successfulRequests = requests.filter((log) => log.statusCode < 400).length;
   const successRate =
-    totalRequests > 0
-      ? Math.round((successfulRequests / totalRequests) * 100)
+    windowCount > 0
+      ? Math.round((successfulRequests / windowCount) * 100)
       : 0;
   const averageLatency =
-    totalRequests > 0
+    windowCount > 0
       ? Math.round(
-          requests.reduce((sum, log) => sum + log.latencyMs, 0) / totalRequests,
+          requests.reduce((sum, log) => sum + log.latencyMs, 0) / windowCount,
         )
       : 0;
 
