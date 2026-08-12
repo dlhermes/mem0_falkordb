@@ -552,6 +552,12 @@ def _semantic_merge_text(llm, old_text, new_text):
     new facts so still-valid details (ports, IPs, numbers, dates, names) are
     preserved. Falls back to ``new_text`` unchanged on any failure (no old
     text, exception, empty/non-string output) so the pipeline never degrades.
+
+    2026-08-12 修复：服务端 LLM（llm-server）强制 JSON 输出。此前本调用未传
+    response_format，合并结果被 LLM 包成 JSON 壳（如 {"id": ..., "content": ...}
+    或嵌套对象）原样入库，导致 UPDATE 后记忆正文变成 JSON（实证：38 条 JSON
+    正文全部是 ADD 正常 → UPDATE 变 JSON）。现在显式传 response_format 并解析
+    merged_text 字段，兼容 LLM 直接返回纯文本的旧行为。
     """
     if not old_text or not str(old_text).strip():
         return new_text
@@ -561,9 +567,12 @@ def _semantic_merge_text(llm, old_text, new_text):
                 {"role": "system", "content": SEMANTIC_MERGE_PROMPT},
                 {
                     "role": "user",
-                    "content": f"【旧记忆】\n{old_text}\n\n【新事实】\n{new_text}\n\n请输出合并后的完整记忆文本：",
+                    "content": f"【旧记忆】\n{old_text}\n\n【新事实】\n{new_text}\n\n"
+                    "请输出合并后的完整记忆文本。你必须严格返回 JSON 格式："
+                    '{"merged_text": "合并后的完整记忆文本"}，不要其他任何内容。',
                 },
-            ]
+            ],
+            response_format={"type": "json_object"},
         )
     except Exception as e:
         logger.warning("Semantic merge failed, using extracted text as-is: %s", e)
@@ -572,6 +581,14 @@ def _semantic_merge_text(llm, old_text, new_text):
     if not merged:
         logger.warning("Semantic merge returned empty output, using extracted text as-is")
         return new_text
+    # LLM 强制 JSON 输出时返回 {"merged_text": "..."}，解析取文本；
+    # 兜底兼容：解析失败或非 JSON 时按纯文本使用（旧行为）。
+    try:
+        parsed = json.loads(merged)
+        if isinstance(parsed, dict) and parsed.get("merged_text"):
+            merged = str(parsed["merged_text"]).strip()
+    except (ValueError, TypeError):
+        pass
     return merged
 
 

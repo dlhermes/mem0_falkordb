@@ -574,12 +574,54 @@ class Mem0MemoryProvider(MemoryProvider):
             else:
                 time.sleep(0.5)
 
+    @staticmethod
+    def _looks_like_json(text: str) -> bool:
+        """判断单条消息内容是否是可解析的 JSON 结构（工具输出/配置原文）。
+
+        用于在进入 LLM 提取链路前把 JSON 正文替换为占位——提取模型会把对话
+        中出现的 JSON 键名/完整对象当"事实"入库（2026-08-12 实证：38 条 JSON
+        正文 + 11 条键名碎片）。判断依据：去掉首尾空白后可被 json.loads 解析，
+        且以 { [ 开头（排除普通文本）。
+        """
+        if not text or not text.strip():
+            return False
+        s = text.strip()
+        if s[0] not in "{[":  # JSON 对象/数组开头，排除普通文本
+            return False
+        try:
+            json.loads(s)
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    @staticmethod
+    def _sanitize_json_message(content: str) -> str:
+        """把纯 JSON 消息替换为占位符，保留自然语言内容原样。
+
+        只剥离"整条消息就是 JSON"的情况（工具输出、配置原文、API 响应）；
+        自然语言消息即使内嵌 JSON 片段也放行（由服务端提取指令负向约束拦截）。
+        相比整轮跳过，占位替换不丢失同一轮里另一条消息的自然语言事实。
+        """
+        if Mem0MemoryProvider._looks_like_json(content):
+            return "<JSON 结构化数据，已省略>"
+        return content
+
     def _route_sync_item(self, item) -> None:
         """把一条入队项路由到 fastpath 直接落库或合并缓冲。"""
         backend = self._backend
         if backend is None:
             return
         session_id, user_content, assistant_content = item
+        # 剥离纯 JSON 消息（工具输出/配置原文）：替换为占位符而非整轮跳过，
+        # 避免 LLM 把 JSON 键名/对象当"事实"入库，同时保留同轮自然语言事实。
+        user_content = self._sanitize_json_message(user_content)
+        assistant_content = self._sanitize_json_message(assistant_content)
+        if (user_content != item[1] or assistant_content != item[2]):
+            self._coalesce_stats["json_sanitized"] = self._coalesce_stats.get("json_sanitized", 0) + 1
+            logger.debug(
+                "潮浪并忆：剥离 JSON 结构消息（session=%s）——替换为占位符，保留自然语言",
+                session_id or "<empty>",
+            )
         msg_chars = len(user_content) + len(assistant_content)
         if not self._coalesce_enabled:
             # 合并功能关闭：沿用旧语义逐条写入
