@@ -31,7 +31,9 @@ from routers import api_keys as api_keys_router
 from routers import auth as auth_router
 from routers import entities as entities_router
 from routers import evolve as evolve_router
+from routers import memories_search as memories_search_router
 from routers import requests as requests_router
+from routers import search_keywords as search_keywords_router
 from schemas import MessageResponse
 from server_state import (
     get_current_config,
@@ -240,7 +242,9 @@ app.include_router(auth_router.router)
 app.include_router(api_keys_router.router)
 app.include_router(entities_router.router)
 app.include_router(evolve_router.router)
+app.include_router(memories_search_router.router)
 app.include_router(requests_router.router)
+app.include_router(search_keywords_router.router)
 
 
 class Message(BaseModel):
