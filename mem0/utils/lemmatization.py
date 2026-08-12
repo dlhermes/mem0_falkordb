@@ -16,7 +16,21 @@ from __future__ import annotations
 
 import logging
 
+try:
+    import jieba
+
+    jieba.setLogLevel(logging.WARNING)
+    _JIEBA_AVAILABLE = True
+except ImportError:
+    jieba = None
+    _JIEBA_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+
+
+def _has_cjk(text: str) -> bool:
+    """True if the text contains any CJK Unified Ideographs (U+4E00-U+9FFF)."""
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
 
 
 def lemmatize_for_bm25(text: str) -> str:
@@ -25,6 +39,9 @@ def lemmatize_for_bm25(text: str) -> str:
     Returns space-joined lemmas for full-text search. Falls back to
     the original text if spaCy is unavailable.
     """
+    if _JIEBA_AVAILABLE and _has_cjk(text):
+        return " ".join(token for token in jieba.cut(text) if token.strip())
+
     from mem0.utils.spacy_models import get_nlp_lemma
 
     nlp = get_nlp_lemma()
