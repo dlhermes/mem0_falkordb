@@ -444,13 +444,19 @@ def _build_filters_and_metadata(
     return base_metadata_template, effective_query_filters
 
 
+def _escape_scope_value(val):
+    """Percent-escape a session scope value so '&' and '=' inside it cannot be
+    confused with the key-value separators."""
+    return val.replace("%", "%25").replace("&", "%26").replace("=", "%3D")
+
+
 def _build_session_scope(filters):
     """Build deterministic session scope string from entity IDs."""
     parts = []
     for key in sorted(["user_id", "agent_id", "run_id"]):
         val = filters.get(key)
         if val:
-            parts.append(f"{key}={val}")
+            parts.append(f"{key}={_escape_scope_value(val)}")
     return "&".join(parts)
 
 
