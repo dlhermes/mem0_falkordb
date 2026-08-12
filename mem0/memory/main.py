@@ -920,13 +920,27 @@ class Memory(MemoryBase):
           - otherwise re-embed the entity text and update the payload
             (the vector store's update() requires a vector).
 
-        No-op if the entity store has never been initialized in this process.
+        If the entity store was never initialized in this process, its lazy
+        initialization is triggered through the `entity_store` property so
+        cleanup is not silently skipped (e.g. delete-only jobs); if the store
+        cannot be initialized, cleanup is skipped.
         Errors on individual entities are swallowed at debug level; outer
         failures are swallowed at warning level so the primary delete/update
         path is never broken by entity cleanup.
         """
         if self._entity_store is None:
-            return
+            try:
+                # Force lazy initialization through the property so cleanup
+                # runs even when this process never touched the entity store
+                # before (e.g. delete-only / dedup / expired-memory jobs).
+                # If the store cannot be initialized, skip cleanup below —
+                # the primary delete/update path must never be broken.
+                self.entity_store
+            except Exception as e:
+                logger.warning(
+                    f"Entity store unavailable, skipping entity cleanup for memory_id={memory_id}: {e}"
+                )
+                return
         search_filters = {k: v for k, v in filters.items() if k in ("user_id", "agent_id", "run_id") and v}
         try:
             listed = self.entity_store.list(filters=search_filters, top_k=10000)
@@ -3123,7 +3137,17 @@ class AsyncMemory(MemoryBase):
     async def _remove_memory_from_entity_store(self, memory_id, filters):
         """Async variant of `Memory._remove_memory_from_entity_store`."""
         if self._entity_store is None:
-            return
+            try:
+                # Force lazy initialization through the property (see the sync
+                # variant) so cleanup runs even in delete-only processes. If
+                # the store cannot be initialized, skip cleanup below — the
+                # primary delete path must never be broken.
+                self.entity_store
+            except Exception as e:
+                logger.warning(
+                    f"Entity store unavailable, skipping entity cleanup for memory_id={memory_id} (async): {e}"
+                )
+                return
         search_filters = {k: v for k, v in filters.items() if k in ("user_id", "agent_id", "run_id") and v}
         try:
             listed = await asyncio.to_thread(self.entity_store.list, filters=search_filters, top_k=10000)
