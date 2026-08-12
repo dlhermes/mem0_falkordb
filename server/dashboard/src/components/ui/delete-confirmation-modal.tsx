@@ -48,7 +48,7 @@ const DeleteConfirmationModal = ({
         <DialogDescription className="mb-4">{description}</DialogDescription>
 
         <div className="space-y-4">
-          <p className="text-sm text-[#565553]">
+          <p className="text-sm text-onSurface-default-tertiary">
             请输入 <span className="font-bold">{itemName}</span> 以确认。
           </p>
           <Input

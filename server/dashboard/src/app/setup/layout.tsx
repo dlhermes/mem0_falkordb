@@ -30,7 +30,7 @@ export default function SetupLayout({
         <AuthProvider>
           <ThemeProvider
             attribute="class"
-            defaultTheme="light"
+            defaultTheme="dark"
             disableTransitionOnChange
           >
             {children}

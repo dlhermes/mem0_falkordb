@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import { LucideIcon } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface Column<T> {
   key: keyof T;
@@ -20,14 +21,19 @@ interface DataTableProps<T> {
   getRowKey?: (row: T, rowIndex: number) => string | number;
   onRowClick?: (row: T, rowIndex: number) => void;
   getRowClassName?: (row: T, rowIndex: number) => string | undefined;
+  selectAll?: {
+    checked: boolean;
+    indeterminate: boolean;
+    onSelectAll: () => void;
+  };
 }
 
 const classes = {
   tableHeaderRow: "h-[38px] border-b border-memBorder-primary",
   tableHeaderCell:
-    "w-[230px] h-[38px] p-2 align-middle bg-surface-default-fg-secondary text-onSurface-default-secondary",
+    "w-[230px] h-[38px] p-2 align-middle bg-surface-default-secondary text-onSurface-default-secondary",
   tableHeaderCheckCell:
-    "w-[40px] h-[38px] p-2 align-middle bg-surface-default-fg-secondary",
+    "w-[40px] h-[38px] p-2 align-middle bg-surface-default-secondary",
   tableHeaderCheckWrap: "flex items-center gap-2",
   tableHeaderCheckBox:
     "box-border flex h-4 w-4 items-center gap-2.5 rounded-sm border border-memBorder-primary p-1",
@@ -36,7 +42,7 @@ const classes = {
   tableRow:
     "h-[38px] border-t border-memBorder-primary bg-surface-default-primary hover:bg-surface-default-primary-hover",
   tableCell:
-    "text-sm font-medium text-onSurface-default-primary px-4 py-2 justify-start align-middle font-[Fustat] leading-[140%] tracking-normal",
+    "text-sm font-normal text-onSurface-default-secondary px-4 py-2.5 justify-start align-middle font-[Fustat] leading-[150%] tracking-normal",
   tableCellFlush: "align-middle",
   tableCellBase: "text-sm px-6",
   tableCellPadding: "",
@@ -49,6 +55,7 @@ export function DataTable<T>({
   getRowKey,
   onRowClick,
   getRowClassName,
+  selectAll,
 }: DataTableProps<T>) {
   const minHeight = data.length > 0 ? Math.max(76, 38 + data.length * 38) : 100;
   // Proportional column widths so table fits container (width numbers treated as relative weights)
@@ -82,7 +89,18 @@ export function DataTable<T>({
                   <th key={index} className={classes.tableHeaderCheckCell}>
                     <div className="flex h-full items-stretch justify-between">
                       <div className={classes.tableHeaderCheckWrap}>
-                        <span className={classes.tableHeaderCheckBox} />
+                        {selectAll ? (
+                          <Checkbox
+                            checked={
+                              selectAll.indeterminate
+                                ? "indeterminate"
+                                : selectAll.checked
+                            }
+                            onCheckedChange={selectAll.onSelectAll}
+                          />
+                        ) : (
+                          <span className={classes.tableHeaderCheckBox} />
+                        )}
                       </div>
                       {!isLastColumn && (
                         <div className={classes.tableHeaderDivider} />
@@ -142,7 +160,7 @@ export function DataTable<T>({
                       className={`flex min-w-0 flex-1 items-center gap-2 overflow-hidden ${flexAlignment}`}
                     >
                       {Icon && <Icon className="size-4 shrink-0" />}
-                      <span className="truncate font-[Fustat] text-sm font-semibold leading-[18px] text-onSurface-default-secondary">
+                      <span className="truncate font-[Fustat] text-[11px] font-medium uppercase leading-[16px] tracking-[0.02em] text-onSurface-default-tertiary">
                         {column.label}
                       </span>
                     </div>

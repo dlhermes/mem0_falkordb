@@ -5,18 +5,19 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 font-fustat font-semibold",
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0 disabled:pointer-events-none disabled:opacity-50 font-fustat",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground  hover:bg-primary/90",
+        default: "bg-primary text-primary-foreground hover:bg-primary-hover",
         destructive:
-          "bg-onSurface-danger-primary hover:bg-onSurface-danger-secondary dark:bg-onSurface-danger-secondary dark:hover:bg-onSurface-danger-primary text-white",
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:
-          "border border-memBorder-primary bg-surface-default-primary hover:bg-neutral-100 hover:text-neutral-800",
+          "border border-memBorder-primary bg-transparent text-onSurface-default-primary hover:bg-sentry-surface-1 hover:text-onSurface-default-primary",
         secondary:
-          "bg-surface-default-fg-secondary text-onSurface-default-primary hover:bg-surface-default-fg-secondary-hover border border-memBorder-primary",
-        ghost: "hover:bg-accent/30 hover:text-accent-foreground",
+          "bg-sentry-night text-onSurface-default-primary hover:bg-sentry-canvas-dark border border-sentry-hairline-strong",
+        ghost:
+          "bg-transparent text-onSurface-default-tertiary hover:bg-surface-default-fg-secondary hover:text-onSurface-default-primary",
         link: "text-primary underline-offset-4 hover:underline",
         grey: "bg-accent/30 text-accent-foreground hover:bg-accent/80",
         primary:
@@ -28,7 +29,7 @@ const buttonVariants = cva(
         surfacePrimary:
           "bg-surface-default-primary text-onSurface-default-primary hover:bg-surface-default-primary-hover",
         transparent:
-          "bg-transparent text-onSurface-default-primary hover:bg-transparent/80 hover:text-white",
+          "bg-transparent text-onSurface-default-primary hover:bg-transparent/80 hover:text-onSurface-default-primary",
         subtle:
           "bg-transparent text-onSurface-default-primary hover:bg-surface-default-fg-secondary-hover border-0",
         brand:

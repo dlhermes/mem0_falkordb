@@ -3,276 +3,91 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0, 0%, 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 0, 0%, 98%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 72.22% 50.59%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5% 64.9%;
-    --radius: 0.5rem;
-
-    --neutral-0: 0, 0%, 100%, 1;
-    --neutral-50: 0, 0%, 98%, 1;
-    --neutral-100: 0, 0%, 96%, 1;
-    --neutral-200: 0, 0%, 90%, 1;
-    --neutral-300: 0, 0%, 83%, 1;
-    --neutral-400: 0, 0%, 64%, 1;
-    --neutral-500: 0, 0%, 45%, 1;
-    --neutral-600: 0, 0%, 32%, 1;
-    --neutral-700: 0, 0%, 25%, 1;
-    --neutral-800: 0, 0%, 15%, 1;
-    --neutral-900: 0, 0%, 9%, 1;
-    --neutral-950: 0, 0%, 4%, 1;
-    --onSurface-primary: 240, 11%, 9%;
-    --onSurface-secondary: 240, 3%, 24%;
-    --onSurface-tertiary: 240, 5%, 65%;
-    --surface-tertiary: 0, 0%, 94%;
-    --surface-secondary: 0, 0%, 98%;
-    --surface-primary: 0, 0%, 100%;
-
-    --border-primary: var(--mem-neutral-200);
-    --elevation-light-2: 0, 0%, 0%, 0.08;
-
-    /* Mem primitives */
-    --mem-neutral-50: #fcfcfc;
-    --mem-neutral-100: #f4f4f4;
-    --mem-neutral-150: #e9e9e9;
-    --mem-neutral-200: #dddddd;
-    --mem-neutral-300: #cccccc;
-    --mem-neutral-400: #b3b3b3;
-    --mem-neutral-450: #999999;
-    --mem-neutral-500: #737373;
-    --mem-neutral-550: #555555;
-    --mem-neutral-600: #383838;
-    --mem-neutral-700: #252525;
-    --mem-neutral-800: #181818;
-    --mem-neutral-850: #0f0f0f;
-    --mem-neutral-900: #0a0a0a;
-    --mem-neutral-950: #050505;
-    --mem-purple-50: #f7f2ff;
-    --mem-purple-100: #efe4ff;
-    --mem-purple-150: #e5d4ff;
-    --mem-purple-200: #dcc3ff;
-    --mem-purple-300: #cbb2ff;
-    --mem-purple-400: #b89cff;
-    --mem-purple-500: #a487f5;
-    --mem-purple-600: #8f74e0;
-    --mem-purple-700: #745cc4;
-    --mem-purple-800: #5c49a3;
-    --mem-purple-900: #47397f;
-    --mem-purple-950: #31275a;
-    --mem-gold-50: #fefaf0;
-    --mem-gold-100: #fbf3df;
-    --mem-gold-150: #f8ebc9;
-    --mem-gold-200: #f4dfae;
-    --mem-gold-300: #f2d288;
-    --mem-gold-400: #f1c96c;
-    --mem-gold-500: #e0b85c;
-    --mem-gold-600: #be9f55;
-    --mem-gold-700: #a68c51;
-    --mem-gold-800: #79683e;
-    --mem-gold-900: #54482c;
-    --mem-gold-950: #2f2819;
-    --mem-blue-50: #f3f5fd;
-    --mem-blue-100: #e5eafb;
-    --mem-blue-200: #d0d9f8;
-    --mem-blue-300: #b1c0f0;
-    --mem-blue-400: #889de1;
-    --mem-blue-500: #5d79d6;
-    --mem-blue-600: #3a5bc8;
-    --mem-blue-700: #2b4496;
-    --mem-blue-800: #152a6c;
-    --mem-blue-900: #0e1d4e;
-    --mem-blue-950: #0b1432;
-    --mem-green-50: #f5fbf7;
-    --mem-green-100: #eaf6ee;
-    --mem-green-200: #d9efe0;
-    --mem-green-300: #bee3ca;
-    --mem-green-400: #97d2af;
-    --mem-green-500: #71c291;
-    --mem-green-600: #57ab73;
-    --mem-green-700: #398457;
-    --mem-green-800: #2b6442;
-    --mem-green-900: #1c4028;
-    --mem-green-950: #112718;
-    --mem-red-50: #fdf3f3;
-    --mem-red-100: #fbe5e5;
-    --mem-red-200: #f8d0d0;
-    --mem-red-300: #f0b1b1;
-    --mem-red-400: #ec7d7d;
-    --mem-red-500: #e64d4d;
-    --mem-red-600: #d32f2f;
-    --mem-red-700: #ad2525;
-    --mem-red-800: #7e1b1b;
-    --mem-red-900: #541212;
-    --mem-red-950: #320b0b;
-
-    /* Mem tokens - light mode */
-    --mem-border-secondary: var(--mem-neutral-300);
-    --mem-border-primary: var(--mem-neutral-200);
-
-    /* Semantic surface tokens - light mode */
-    --surface-default-primary: var(--mem-neutral-50);
-    --surface-default-primary-hover: var(--mem-neutral-100);
-    --surface-default-secondary: var(--mem-neutral-100);
-    --surface-default-secondary-hover: var(--mem-neutral-150);
-    --surface-default-fg-secondary: var(--mem-neutral-100);
-    --surface-default-fg-secondary-hover: var(--mem-neutral-150);
-    --surface-default-tertiary: var(--mem-neutral-150);
-    --surface-default-tertiary-hover: var(--mem-neutral-200);
-    --surface-default-brand: var(--mem-purple-50);
-    --surface-default-brand-hover: var(--mem-purple-100);
-    --surface-event-add: var(--mem-green-200);
-    --surface-event-search: var(--mem-blue-100);
-    --surface-event-delete: var(--mem-red-100);
-    --surface-event-get: var(--mem-purple-100);
-    --surface-positive-primary: var(--mem-green-100);
-    --surface-positive-primary-hover: var(--mem-green-200);
-    --surface-danger-primary: var(--mem-red-100);
-    --surface-danger-primary-hover: var(--mem-red-200);
-    --surface-info-primary: var(--mem-blue-50);
-    --surface-info-primary-hover: var(--mem-blue-100);
-
-    /* Semantic on-surface tokens - light mode */
-    --on-surface-default-primary: var(--mem-neutral-800);
-    --on-surface-default-secondary: var(--mem-neutral-600);
-    --on-surface-default-tertiary: var(--mem-neutral-450);
-    --on-surface-default-brand: var(--mem-purple-400);
-    --on-surface-default-brand-hover: var(--mem-purple-700);
-    --on-surface-event-add: var(--mem-green-700);
-    --on-surface-event-search: var(--mem-blue-600);
-    --on-surface-event-delete: var(--mem-red-600);
-    --on-surface-event-get: var(--mem-purple-700);
-    --on-surface-positive-primary: var(--mem-green-700);
-    --on-surface-positive-secondary: var(--mem-green-600);
-    --on-surface-danger-primary: var(--mem-red-600);
-    --on-surface-danger-secondary: var(--mem-red-400);
-    --on-surface-info-primary: var(--mem-blue-600);
-    --on-surface-info-secondary: var(--mem-blue-400);
-
-    /* Typography: size, line-height, letter-spacing per token */
-    --typo-h1-size: 32px;
-    --typo-h1-line: 36px;
-    --typo-h1-tracking: -0.01em;
-    --typo-h2-size: 28px;
-    --typo-h2-line: 32px;
-    --typo-h2-tracking: -0.01em;
-    --typo-h3-size: 24px;
-    --typo-h3-line: 28px;
-    --typo-h3-tracking: -0.01em;
-    --typo-h4-size: 20px;
-    --typo-h4-line: 26px;
-    --typo-h4-tracking: 0;
-    --typo-h5-size: 18px;
-    --typo-h5-line: 22px;
-    --typo-h5-tracking: 0;
-    --typo-body-lg-size: 18px;
-    --typo-body-lg-line: 22px;
-    --typo-body-lg-tracking: 0;
-    --typo-body-size: 16px;
-    --typo-body-line: 22px;
-    --typo-body-tracking: 0;
-    --typo-body-sm-size: 14px;
-    --typo-body-sm-line: 18px;
-    --typo-body-sm-tracking: 0;
-    --typo-body-xs-size: 12px;
-    --typo-body-xs-line: 16px;
-    --typo-body-xs-tracking: 0;
-    --typo-caption-size: 12px;
-    --typo-caption-line: 16px;
-    --typo-caption-tracking: 0.05em;
-    --typo-caption-sm-size: 10px;
-    --typo-caption-sm-line: 12px;
-    --typo-caption-sm-tracking: 0.05em;
-    --typo-overline-size: 14px;
-    --typo-overline-line: 16px;
-    --typo-overline-tracking: 0.05em;
-  }
-
+  :root,
   .dark {
-    --background: 0 0% 11%;
-    --foreground: 0 0% 88%;
-    --card: 0 0% 11%;
-    --card-foreground: 0 0% 88%;
-    --popover: 0 0% 11%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 18.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240, 10%, 4%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 85.7% 97.3%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --background: 258 40% 10%;
+    --foreground: 260 20% 97%;
+    --card: 259 40% 14%;
+    --card-foreground: 260 20% 97%;
+    --popover: 256 39% 25%;
+    --popover-foreground: 260 20% 97%;
+    --primary: 77 83% 62%;
+    --primary-foreground: 79 76% 8%;
+    --primary-hover: 75 87% 70%;
+    --secondary: 257 40% 17%;
+    --secondary-foreground: 278 6% 74%;
+    --muted: 257 40% 17%;
+    --muted-foreground: 261 9% 56%;
+    --accent: 257 40% 17%;
+    --accent-foreground: 260 20% 97%;
+    --destructive: 358 75% 59%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 134 62% 40%;
+    --warning: 37 91% 55%;
+    --border: 252 33% 26%;
+    --input: 252 33% 26%;
+    --ring: 247 44% 56%;
+    --radius: 8px;
 
-    --neutral-0: 0, 0%, 0%, 1;
-    --neutral-50: 0, 0%, 4%, 1;
-    --neutral-100: 0, 0%, 9%, 1;
-    --neutral-200: 0, 0%, 15%, 1;
-    --neutral-300: 0, 0%, 22%, 1;
-    --neutral-400: 0, 0%, 32%, 1;
-    --neutral-500: 0, 0%, 54%, 1;
-    --neutral-600: 0, 0%, 64%, 1;
-    --neutral-700: 0, 0%, 83%, 1;
-    --neutral-800: 0, 0%, 90%, 1;
-    --neutral-900: 0, 0%, 96%, 1;
-    --neutral-950: 0, 0%, 98%, 1;
-    --onSurface-primary: 0, 0%, 100%;
-    --onSurface-secondary: 40, 4%, 85%;
-    --onSurface-tertiary: 240, 4%, 46%;
-    --surface-tertiary: 240, 4%, 16%;
-    --surface-secondary: 240, 10%, 4%;
-    --surface-primary: 240, 11%, 9%;
-    --border-primary: var(--mem-neutral-800);
+    --sidebar-background: 259 40% 14%;
+    --sidebar-foreground: 260 20% 97%;
+    --sidebar-primary: 77 83% 62%;
+    --sidebar-primary-foreground: 79 76% 8%;
+    --sidebar-accent: 257 40% 17%;
+    --sidebar-accent-foreground: 260 20% 97%;
+    --sidebar-border: 252 33% 26%;
+    --sidebar-ring: 247 44% 56%;
+
+    --neutral-0: 258, 40%, 10%, 1;
+    --neutral-50: 260, 20%, 97%, 1;
+    --neutral-100: 261, 9%, 56%, 1;
+    --neutral-200: 265, 13%, 25%, 1;
+    --neutral-300: 252, 33%, 26%, 1;
+    --neutral-400: 254, 27%, 34%, 1;
+    --neutral-500: 261, 9%, 56%, 1;
+    --neutral-600: 278, 6%, 74%, 1;
+    --neutral-700: 260, 20%, 90%, 1;
+    --neutral-800: 260, 20%, 97%, 1;
+    --neutral-900: 0, 0%, 100%, 1;
+    --neutral-950: 0, 0%, 100%, 1;
+    --onSurface-primary: 260, 20%, 97%, 1;
+    --onSurface-secondary: 278, 6%, 74%, 1;
+    --onSurface-tertiary: 261, 9%, 56%, 1;
+    --surface-tertiary: 256, 39%, 25%, 1;
+    --surface-secondary: 258, 40%, 10%, 1;
+    --surface-primary: 259, 40%, 14%, 1;
+
+    --border-primary: var(--mem-neutral-600);
     --elevation-light-2: 0, 0%, 0%, 0.08;
 
-    /* Mem primitives (same in dark mode) */
-    --mem-neutral-50: #fcfcfc;
-    --mem-neutral-100: #f4f4f4;
-    --mem-neutral-150: #e9e9e9;
-    --mem-neutral-200: #dddddd;
-    --mem-neutral-300: #cccccc;
-    --mem-neutral-400: #b3b3b3;
-    --mem-neutral-450: #999999;
-    --mem-neutral-500: #737373;
-    --mem-neutral-550: #555555;
-    --mem-neutral-600: #383838;
-    --mem-neutral-700: #252525;
-    --mem-neutral-800: #181818;
-    --mem-neutral-850: #0f0f0f;
-    --mem-neutral-900: #0a0a0a;
-    --mem-neutral-950: #050505;
-    --mem-purple-50: #f7f2ff;
-    --mem-purple-100: #efe4ff;
-    --mem-purple-150: #e5d4ff;
-    --mem-purple-200: #dcc3ff;
-    --mem-purple-300: #cbb2ff;
-    --mem-purple-400: #b89cff;
-    --mem-purple-500: #a487f5;
-    --mem-purple-600: #8f74e0;
-    --mem-purple-700: #745cc4;
-    --mem-purple-800: #5c49a3;
-    --mem-purple-900: #47397f;
-    --mem-purple-950: #31275a;
+    /* Mem primitives (Sentry remap: night → canvas-dark → surfaces → hairline) */
+    --mem-neutral-50: #f7f6f9;
+    --mem-neutral-100: #d8d4de;
+    --mem-neutral-150: #bdb8c0;
+    --mem-neutral-200: #a8a2b5;
+    --mem-neutral-300: #8b8498;
+    --mem-neutral-400: #6b6482;
+    --mem-neutral-450: #544b6c;
+    --mem-neutral-500: #3f3849;
+    --mem-neutral-550: #4a3f6e;
+    --mem-neutral-600: #362d59;
+    --mem-neutral-700: #332657;
+    --mem-neutral-800: #2b2048;
+    --mem-neutral-850: #241a3d;
+    --mem-neutral-900: #1f1633;
+    --mem-neutral-950: #150f23;
+    --mem-purple-50: #f2f0fc;
+    --mem-purple-100: #e4e0f7;
+    --mem-purple-150: #d5cef1;
+    --mem-purple-200: #c2b9f0;
+    --mem-purple-300: #a89fe0;
+    --mem-purple-400: #8f84d8;
+    --mem-purple-500: #6a5fc1;
+    --mem-purple-600: #5c4aa8;
+    --mem-purple-700: #4a3f6e;
+    --mem-purple-800: #372e56;
+    --mem-purple-900: #241f3d;
+    --mem-purple-950: #422082;
     --mem-gold-50: #fefaf0;
     --mem-gold-100: #fbf3df;
     --mem-gold-150: #f8ebc9;
@@ -285,17 +100,17 @@
     --mem-gold-800: #79683e;
     --mem-gold-900: #54482c;
     --mem-gold-950: #2f2819;
-    --mem-blue-50: #f3f5fd;
-    --mem-blue-100: #e5eafb;
-    --mem-blue-200: #d0d9f8;
-    --mem-blue-300: #b1c0f0;
-    --mem-blue-400: #889de1;
-    --mem-blue-500: #5d79d6;
-    --mem-blue-600: #3a5bc8;
-    --mem-blue-700: #2b4496;
-    --mem-blue-800: #152a6c;
-    --mem-blue-900: #0e1d4e;
-    --mem-blue-950: #0b1432;
+    --mem-blue-50: #f2f0fc;
+    --mem-blue-100: #e4e0f7;
+    --mem-blue-200: #cfc8f0;
+    --mem-blue-300: #b3aae8;
+    --mem-blue-400: #a89fe0;
+    --mem-blue-500: #8f84d8;
+    --mem-blue-600: #6a5fc1;
+    --mem-blue-700: #4a3f6e;
+    --mem-blue-800: #372e56;
+    --mem-blue-900: #241f3d;
+    --mem-blue-950: #150f23;
     --mem-green-50: #f5fbf7;
     --mem-green-100: #eaf6ee;
     --mem-green-200: #d9efe0;
@@ -319,19 +134,19 @@
     --mem-red-900: #541212;
     --mem-red-950: #320b0b;
 
-    /* Mem tokens - dark mode */
-    --mem-border-primary: var(--mem-neutral-700);
-    --mem-border-secondary: var(--mem-neutral-600);
+    /* Mem tokens */
+    --mem-border-secondary: var(--mem-neutral-550);
+    --mem-border-primary: var(--mem-neutral-600);
 
-    /* Semantic surface tokens - dark mode */
-    --surface-default-primary: var(--mem-neutral-850);
-    --surface-default-primary-hover: var(--mem-neutral-800);
+    /* Semantic surface tokens */
+    --surface-default-primary: var(--mem-neutral-900);
+    --surface-default-primary-hover: var(--mem-neutral-850);
     --surface-default-secondary: var(--mem-neutral-950);
     --surface-default-secondary-hover: var(--mem-neutral-900);
-    --surface-default-fg-secondary: var(--mem-neutral-800);
-    --surface-default-fg-secondary-hover: var(--mem-neutral-700);
+    --surface-default-fg-secondary: var(--mem-neutral-850);
+    --surface-default-fg-secondary-hover: var(--mem-neutral-800);
     --surface-default-tertiary: var(--mem-neutral-700);
-    --surface-default-tertiary-hover: var(--mem-neutral-600);
+    --surface-default-tertiary-hover: var(--mem-neutral-800);
     --surface-default-brand: var(--mem-purple-950);
     --surface-default-brand-hover: var(--mem-purple-900);
     --surface-event-add: var(--mem-green-950);
@@ -345,10 +160,34 @@
     --surface-info-primary: var(--mem-blue-950);
     --surface-info-primary-hover: var(--mem-blue-900);
 
-    /* Semantic on-surface tokens - dark mode */
+    /* Sentry palette (referenced by tailwind sentry.*) */
+    --sentry-night: #150f23;
+    --sentry-canvas: #150f23;
+    --sentry-canvas-dark: #1f1633;
+    --sentry-surface-1: #241a3d;
+    --sentry-surface-2: #2b2048;
+    --sentry-surface-3: #332657;
+    --sentry-hairline: #362d59;
+    --sentry-hairline-strong: #4a3f6e;
+    --sentry-lime: #c2ef4e;
+    --sentry-lime-hover: #d4f56e;
+    --sentry-on-lime: #1a2405;
+    --sentry-violet: #6a5fc1;
+    --sentry-violet-mid: #79628c;
+    --sentry-violet-deep: #422082;
+    --sentry-pink: #fa7faa;
+    --sentry-ink: #f7f6f9;
+    --sentry-ink-muted: #bdb8c0;
+    --sentry-ink-subtle: #8b8498;
+    --sentry-ink-faint: #3f3849;
+    --sentry-success: #27a644;
+    --sentry-warning: #f5a623;
+    --sentry-danger: #e5484d;
+
+    /* Semantic on-surface tokens */
     --on-surface-default-primary: var(--mem-neutral-50);
-    --on-surface-default-secondary: var(--mem-neutral-400);
-    --on-surface-default-tertiary: var(--mem-neutral-500);
+    --on-surface-default-secondary: var(--mem-neutral-150);
+    --on-surface-default-tertiary: var(--mem-neutral-300);
     --on-surface-default-brand: var(--mem-purple-400);
     --on-surface-default-brand-hover: var(--mem-purple-700);
     --on-surface-event-add: var(--mem-green-600);
@@ -361,6 +200,169 @@
     --on-surface-danger-secondary: var(--mem-red-600);
     --on-surface-info-primary: var(--mem-blue-400);
     --on-surface-info-secondary: var(--mem-blue-600);
+
+    /* Typography: size, line-height, letter-spacing per token */
+    --typo-h1-size: 32px;
+    --typo-h1-line: 38px;
+    --typo-h1-tracking: -0.02em;
+    --typo-h2-size: 28px;
+    --typo-h2-line: 34px;
+    --typo-h2-tracking: -0.02em;
+    --typo-h3-size: 24px;
+    --typo-h3-line: 30px;
+    --typo-h3-tracking: -0.015em;
+    --typo-h4-size: 20px;
+    --typo-h4-line: 26px;
+    --typo-h4-tracking: -0.01em;
+    --typo-h5-size: 18px;
+    --typo-h5-line: 24px;
+    --typo-h5-tracking: -0.01em;
+    --typo-body-lg-size: 18px;
+    --typo-body-lg-line: 27px;
+    --typo-body-lg-tracking: -0.01em;
+    --typo-body-size: 16px;
+    --typo-body-line: 24px;
+    --typo-body-tracking: -0.01em;
+    --typo-body-sm-size: 14px;
+    --typo-body-sm-line: 21px;
+    --typo-body-sm-tracking: -0.01em;
+    --typo-body-xs-size: 12px;
+    --typo-body-xs-line: 18px;
+    --typo-body-xs-tracking: -0.005em;
+    --typo-caption-size: 12px;
+    --typo-caption-line: 16px;
+    --typo-caption-tracking: 0.05em;
+    --typo-caption-sm-size: 10px;
+    --typo-caption-sm-line: 12px;
+    --typo-caption-sm-tracking: 0.05em;
+    --typo-overline-size: 14px;
+    --typo-overline-line: 16px;
+    --typo-overline-tracking: 0.05em;
+  }
+
+  /* Light theme: same Sentry palette, inverted luminance. Keeps lime/violet/pink
+     accents; swaps the purple-night canvas for a lavender-tinted light canvas. */
+  .light {
+    --background: 258 30% 96%;
+    --foreground: 259 32% 16%;
+    --card: 0 0% 100%;
+    --card-foreground: 259 32% 16%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 259 32% 16%;
+    --primary: 77 83% 62%;
+    --primary-foreground: 79 76% 8%;
+    --primary-hover: 75 87% 70%;
+    --secondary: 258 36% 93%;
+    --secondary-foreground: 259 32% 16%;
+    --muted: 258 36% 93%;
+    --muted-foreground: 261 9% 42%;
+    --accent: 258 36% 93%;
+    --accent-foreground: 259 32% 16%;
+    --destructive: 358 75% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 134 62% 36%;
+    --warning: 37 91% 50%;
+    --border: 254 24% 89%;
+    --input: 254 24% 89%;
+    --ring: 247 44% 56%;
+    --radius: 8px;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 259 32% 16%;
+    --sidebar-primary: 77 83% 45%;
+    --sidebar-primary-foreground: 79 76% 8%;
+    --sidebar-accent: 258 36% 93%;
+    --sidebar-accent-foreground: 259 32% 16%;
+    --sidebar-border: 254 24% 89%;
+    --sidebar-ring: 247 44% 56%;
+
+    --neutral-0: 259, 32%, 16%, 1;
+    --neutral-50: 259, 32%, 16%, 1;
+    --neutral-100: 261, 9%, 42%, 1;
+    --neutral-200: 254, 24%, 89%, 1;
+    --neutral-300: 254, 24%, 89%, 1;
+    --neutral-400: 258, 22%, 84%, 1;
+    --neutral-500: 261, 9%, 45%, 1;
+    --neutral-600: 258, 12%, 48%, 1;
+    --neutral-700: 259, 20%, 38%, 1;
+    --neutral-800: 259, 24%, 30%, 1;
+    --neutral-900: 260, 20%, 98%, 1;
+    --neutral-950: 258, 30%, 96%, 1;
+    --onSurface-primary: 259, 32%, 16%, 1;
+    --onSurface-secondary: 258, 12%, 42%, 1;
+    --onSurface-tertiary: 261, 9%, 42%, 1;
+    --surface-tertiary: 258, 36%, 93%, 1;
+    --surface-secondary: 258, 30%, 96%, 1;
+    --surface-primary: 0, 0%, 100%, 1;
+    --border-primary: var(--mem-neutral-600);
+
+    /* mem-neutral scale (inverted for light) */
+    --mem-neutral-50: #1f1633;
+    --mem-neutral-100: #322a4a;
+    --mem-neutral-150: #4b4370;
+    --mem-neutral-200: #5f5780;
+    --mem-neutral-300: #6b6482;
+    --mem-neutral-400: #8b8498;
+    --mem-neutral-450: #a39db4;
+    --mem-neutral-500: #bdb8c9;
+    --mem-neutral-550: #d0cbdb;
+    --mem-neutral-600: #dcd8e6;
+    --mem-neutral-700: #e6e3f0;
+    --mem-neutral-800: #eceaf3;
+    --mem-neutral-850: #f2f0f7;
+    --mem-neutral-900: #faf9fc;
+    --mem-neutral-950: #f3f1f8;
+
+    /* Semantic surface tokens (light) */
+    --mem-border-secondary: var(--mem-neutral-550);
+    --mem-border-primary: var(--mem-neutral-600);
+    --surface-default-primary: #ffffff;
+    --surface-default-primary-hover: var(--mem-neutral-850);
+    --surface-default-secondary: var(--mem-neutral-950);
+    --surface-default-secondary-hover: var(--mem-neutral-900);
+    --surface-default-fg-secondary: var(--mem-neutral-850);
+    --surface-default-fg-secondary-hover: var(--mem-neutral-800);
+    --surface-default-tertiary: var(--mem-neutral-700);
+    --surface-default-tertiary-hover: var(--mem-neutral-800);
+    --surface-default-brand: var(--mem-purple-100);
+    --surface-default-brand-hover: var(--mem-purple-200);
+    --surface-event-add: var(--mem-green-100);
+    --surface-event-search: var(--mem-blue-100);
+    --surface-event-delete: var(--mem-red-100);
+    --surface-event-get: var(--mem-purple-100);
+    --surface-positive-primary: var(--mem-green-100);
+    --surface-positive-primary-hover: var(--mem-green-200);
+    --surface-danger-primary: var(--mem-red-100);
+    --surface-danger-primary-hover: var(--mem-red-200);
+    --surface-info-primary: var(--mem-blue-100);
+    --surface-info-primary-hover: var(--mem-blue-200);
+
+    /* Semantic on-surface tokens (light) */
+    --on-surface-default-primary: var(--mem-neutral-50);
+    --on-surface-default-secondary: var(--mem-neutral-150);
+    --on-surface-default-tertiary: var(--mem-neutral-300);
+    --on-surface-default-brand: var(--mem-purple-600);
+    --on-surface-default-brand-hover: var(--mem-purple-800);
+    --on-surface-event-add: var(--mem-green-700);
+    --on-surface-event-search: var(--mem-blue-600);
+    --on-surface-event-delete: var(--mem-red-600);
+    --on-surface-event-get: var(--mem-purple-600);
+    --on-surface-positive-primary: var(--mem-green-700);
+    --on-surface-positive-secondary: var(--mem-green-800);
+    --on-surface-danger-primary: var(--mem-red-600);
+    --on-surface-danger-secondary: var(--mem-red-700);
+    --on-surface-info-primary: var(--mem-blue-600);
+    --on-surface-info-secondary: var(--mem-blue-700);
+
+    /* Sentry palette light overrides (accents keep dark values) */
+    --sentry-night: #f3f1f8;
+    --sentry-canvas: #f3f1f8;
+    --sentry-canvas-dark: #ffffff;
+    --sentry-surface-1: #ffffff;
+    --sentry-surface-2: #f2f0f7;
+    --sentry-surface-3: #e6e3f0;
+    --sentry-hairline: #dcd8e6;
+    --sentry-hairline-strong: #c4bed8;
   }
 
   * {
@@ -384,63 +386,63 @@
    font/weight via font-fustat, font-dm-mono (var(--font-*, ui-sans-serif) from Tailwind). */
 @layer components {
   .typo-h1 {
-    @apply font-fustat font-bold;
+    @apply font-fustat font-semibold;
     font-size: var(--typo-h1-size);
     line-height: var(--typo-h1-line);
     letter-spacing: var(--typo-h1-tracking);
   }
 
   .typo-h2 {
-    @apply font-fustat font-bold;
+    @apply font-fustat font-semibold;
     font-size: var(--typo-h2-size);
     line-height: var(--typo-h2-line);
     letter-spacing: var(--typo-h2-tracking);
   }
 
   .typo-h3 {
-    @apply font-fustat font-bold;
+    @apply font-fustat font-semibold;
     font-size: var(--typo-h3-size);
     line-height: var(--typo-h3-line);
     letter-spacing: var(--typo-h3-tracking);
   }
 
   .typo-h4 {
-    @apply font-fustat font-bold;
+    @apply font-fustat font-semibold;
     font-size: var(--typo-h4-size);
     line-height: var(--typo-h4-line);
     letter-spacing: var(--typo-h4-tracking);
   }
 
   .typo-h5 {
-    @apply font-fustat font-bold;
+    @apply font-fustat font-semibold;
     font-size: var(--typo-h5-size);
     line-height: var(--typo-h5-line);
     letter-spacing: var(--typo-h5-tracking);
   }
 
   .typo-body-lg {
-    @apply font-fustat font-semibold;
+    @apply font-fustat font-normal;
     font-size: var(--typo-body-lg-size);
     line-height: var(--typo-body-lg-line);
     letter-spacing: var(--typo-body-lg-tracking);
   }
 
   .typo-body {
-    @apply font-fustat font-semibold;
+    @apply font-fustat font-normal;
     font-size: var(--typo-body-size);
     line-height: var(--typo-body-line);
     letter-spacing: var(--typo-body-tracking);
   }
 
   .typo-body-sm {
-    @apply font-fustat font-semibold;
+    @apply font-fustat font-normal;
     font-size: var(--typo-body-sm-size);
     line-height: var(--typo-body-sm-line);
     letter-spacing: var(--typo-body-sm-tracking);
   }
 
   .typo-body-xs {
-    @apply font-fustat font-semibold;
+    @apply font-fustat font-normal;
     font-size: var(--typo-body-xs-size);
     line-height: var(--typo-body-xs-line);
     letter-spacing: var(--typo-body-xs-tracking);

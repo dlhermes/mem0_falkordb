@@ -1,14 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { format, formatDistanceToNow } from "date-fns";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import { DataTable } from "@/components/shared/data-table";
 import { TableSkeleton } from "@/components/shared/table-skeleton";
 import { EmptyState } from "@/components/self-hosted/empty-state";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import CopyButton from "@/components/misc/copy-button";
 import { api } from "@/utils/api";
 import { REQUEST_ENDPOINTS } from "@/utils/api-endpoints";
 import { useApiQuery } from "@/hooks/use-api-query";
@@ -27,29 +43,48 @@ type RequestLog = {
 const REQUEST_LOG_LIMIT = 200;
 const PAGE_SIZE = 20;
 
-const getStatusClassName = (statusCode: number) => {
+const STATUS_FILTERS = [
+  { value: "all", label: "全部状态" },
+  { value: "2", label: "2xx" },
+  { value: "3", label: "3xx" },
+  { value: "4", label: "4xx" },
+  { value: "5", label: "5xx" },
+] as const;
+
+const TIME_FILTERS = [
+  { value: "all", label: "全部时间" },
+  { value: "24", label: "近 24 小时" },
+  { value: "168", label: "近 7 天" },
+  { value: "720", label: "近 30 天" },
+] as const;
+
+const getStatusBadge = (
+  statusCode: number,
+): "danger" | "warning" | "success" => {
   if (statusCode >= 500) {
-    return "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300";
+    return "danger";
   }
 
   if (statusCode >= 400) {
-    return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-300";
+    return "warning";
   }
 
-  return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-300";
+  return "success";
 };
 
-const getMethodClassName = (method: string) => {
+const getMethodBadge = (
+  method: string,
+): "lime" | "violet" | "pink" | "outline" => {
   switch (method.toUpperCase()) {
     case "POST":
-      return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/40 dark:bg-sky-950/40 dark:text-sky-300";
+      return "lime";
     case "PUT":
     case "PATCH":
-      return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-300";
+      return "violet";
     case "DELETE":
-      return "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300";
+      return "pink";
     default:
-      return "border-memBorder-primary bg-surface-default-secondary text-onSurface-default-secondary";
+      return "outline";
   }
 };
 
@@ -83,6 +118,10 @@ const normalizeLog = (entry: ApiRequestLog): RequestLog => {
 export default function RequestsPage() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [methodFilter, setMethodFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [timeFilter, setTimeFilter] = useState("all");
+  const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
 
   const {
     data: logs = [],
@@ -100,8 +139,34 @@ export default function RequestsPage() {
     { errorToast: "加载请求日志失败", initialData: [] },
   );
 
-  const totalRequests = logs.length;
-  const successfulRequests = logs.filter((log) => log.statusCode < 400).length;
+  const methodOptions = useMemo(() => {
+    const methods = new Set(logs.map((log) => log.method.toUpperCase()));
+    return Array.from(methods).sort();
+  }, [logs]);
+
+  const filteredLogs = useMemo(() => {
+    return logs.filter((log) => {
+      if (methodFilter !== "all" && log.method.toUpperCase() !== methodFilter) {
+        return false;
+      }
+      if (
+        statusFilter !== "all" &&
+        Math.floor(log.statusCode / 100) !== Number(statusFilter)
+      ) {
+        return false;
+      }
+      if (timeFilter !== "all") {
+        const cutoff = Date.now() - Number(timeFilter) * 60 * 60 * 1000;
+        if (new Date(log.createdAt).getTime() < cutoff) return false;
+      }
+      return true;
+    });
+  }, [logs, methodFilter, statusFilter, timeFilter]);
+
+  const totalRequests = filteredLogs.length;
+  const successfulRequests = filteredLogs.filter(
+    (log) => log.statusCode < 400,
+  ).length;
   const successRate =
     totalRequests > 0
       ? Math.round((successfulRequests / totalRequests) * 100)
@@ -109,9 +174,12 @@ export default function RequestsPage() {
   const averageLatency =
     totalRequests > 0
       ? Math.round(
-          logs.reduce((sum, log) => sum + log.latencyMs, 0) / totalRequests,
+          filteredLogs.reduce((sum, log) => sum + log.latencyMs, 0) /
+            totalRequests,
         )
       : 0;
+
+  const resetPage = () => setPage(0);
 
   const columns = [
     {
@@ -129,9 +197,7 @@ export default function RequestsPage() {
       label: "方法",
       width: 96,
       render: (value: string) => (
-        <Badge variant="outline" className={getMethodClassName(value)}>
-          {value.toUpperCase()}
-        </Badge>
+        <Badge variant={getMethodBadge(value)}>{value.toUpperCase()}</Badge>
       ),
     },
     {
@@ -149,9 +215,7 @@ export default function RequestsPage() {
       label: "状态",
       width: 120,
       render: (value: number) => (
-        <Badge variant="outline" className={getStatusClassName(value)}>
-          {value}
-        </Badge>
+        <Badge variant={getStatusBadge(value)}>{value}</Badge>
       ),
     },
     {
@@ -208,12 +272,18 @@ export default function RequestsPage() {
             value: totalRequests > 0 ? `${averageLatency} ms` : "--",
           },
         ].map((card) => (
-          <Card key={card.label} className="border-memBorder-primary">
-            <CardContent className="p-5">
-              <p className="text-xs text-onSurface-default-tertiary">
+          <Card
+            key={card.label}
+            className="relative border-sentry-hairline overflow-hidden"
+          >
+            <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-sentry-lime via-sentry-violet to-sentry-pink" />
+            <CardContent className="p-4 pt-5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-onSurface-default-tertiary">
                 {card.label}
               </p>
-              <p className="mt-1 text-2xl font-semibold">{card.value}</p>
+              <p className="mt-1.5 text-[26px] font-bold tabular-nums leading-none text-onSurface-default-primary">
+                {card.value}
+              </p>
             </CardContent>
           </Card>
         ))}
@@ -237,19 +307,96 @@ export default function RequestsPage() {
         />
       ) : (
         <>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-[11px] font-semibold uppercase tracking-[0.06em] text-onSurface-default-tertiary">
+                方法
+              </Label>
+              <Select
+                value={methodFilter}
+                onValueChange={(v) => {
+                  setMethodFilter(v);
+                  resetPage();
+                }}
+              >
+                <SelectTrigger variant="dropdown" className="w-40">
+                  <SelectValue placeholder="全部" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  {methodOptions.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[11px] font-semibold uppercase tracking-[0.06em] text-onSurface-default-tertiary">
+                状态
+              </Label>
+              <Select
+                value={statusFilter}
+                onValueChange={(v) => {
+                  setStatusFilter(v);
+                  resetPage();
+                }}
+              >
+                <SelectTrigger variant="dropdown" className="w-40">
+                  <SelectValue placeholder="全部状态" />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_FILTERS.map((f) => (
+                    <SelectItem key={f.value} value={f.value}>
+                      {f.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[11px] font-semibold uppercase tracking-[0.06em] text-onSurface-default-tertiary">
+                时间
+              </Label>
+              <Select
+                value={timeFilter}
+                onValueChange={(v) => {
+                  setTimeFilter(v);
+                  resetPage();
+                }}
+              >
+                <SelectTrigger variant="dropdown" className="w-40">
+                  <SelectValue placeholder="全部时间" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIME_FILTERS.map((f) => (
+                    <SelectItem key={f.value} value={f.value}>
+                      {f.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <Card className="border-memBorder-primary overflow-hidden">
             <DataTable
-              data={logs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)}
+              data={filteredLogs.slice(
+                page * PAGE_SIZE,
+                (page + 1) * PAGE_SIZE,
+              )}
               columns={columns}
               getRowKey={(row) => row.id}
+              onRowClick={(row) => setSelectedLog(row)}
             />
           </Card>
-          {logs.length > PAGE_SIZE && (
+          {filteredLogs.length > PAGE_SIZE && (
             <div className="flex items-center justify-between text-sm text-onSurface-default-tertiary">
               <span>
                 第 {page * PAGE_SIZE + 1}–
-                {Math.min((page + 1) * PAGE_SIZE, logs.length)} 条，共{" "}
-                {logs.length} 条
+                {Math.min((page + 1) * PAGE_SIZE, filteredLogs.length)} 条，共{" "}
+                {filteredLogs.length} 条
               </span>
               <div className="flex gap-2">
                 <Button
@@ -263,7 +410,7 @@ export default function RequestsPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={(page + 1) * PAGE_SIZE >= logs.length}
+                  disabled={(page + 1) * PAGE_SIZE >= filteredLogs.length}
                   onClick={() => setPage((p) => p + 1)}
                 >
                   下一页
@@ -273,6 +420,69 @@ export default function RequestsPage() {
           )}
         </>
       )}
+
+      <Sheet
+        open={!!selectedLog}
+        onOpenChange={(open) => {
+          if (!open) setSelectedLog(null);
+        }}
+      >
+        <SheetContent className="sm:max-w-md overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>请求详情</SheetTitle>
+            <SheetDescription className="sr-only">
+              查看请求日志详情
+            </SheetDescription>
+          </SheetHeader>
+          {selectedLog && (
+            <div className="mt-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <Badge variant={getMethodBadge(selectedLog.method)}>
+                  {selectedLog.method.toUpperCase()}
+                </Badge>
+                <Badge variant={getStatusBadge(selectedLog.statusCode)}>
+                  {selectedLog.statusCode}
+                </Badge>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-onSurface-default-tertiary">
+                  路径
+                </Label>
+                <div className="flex items-start gap-2">
+                  <p className="flex-1 text-xs font-mono break-all text-onSurface-default-primary">
+                    {selectedLog.path}
+                  </p>
+                  <CopyButton textToCopy={selectedLog.path} label="复制路径" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs text-onSurface-default-tertiary">
+                    延迟
+                  </Label>
+                  <p className="text-sm">{selectedLog.latencyMs} ms</p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-onSurface-default-tertiary">
+                    认证方式
+                  </Label>
+                  <p className="text-sm">
+                    {getAuthLabel(selectedLog.authType)}
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-onSurface-default-tertiary">
+                  创建时间
+                </Label>
+                <p className="text-sm">
+                  {format(new Date(selectedLog.createdAt), "PPpp")}
+                </p>
+              </div>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

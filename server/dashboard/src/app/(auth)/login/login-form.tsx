@@ -42,7 +42,7 @@ export default function LoginForm() {
 
   useEffect(() => {
     if (!isLoading && user) {
-      router.push(searchParams.get("next") || "/dashboard/requests");
+      router.push(searchParams.get("next") || "/dashboard");
     }
   }, [user, isLoading, router, searchParams]);
 
@@ -58,7 +58,7 @@ export default function LoginForm() {
     setSubmitting(true);
     try {
       await login(email, password);
-      router.push(searchParams.get("next") || "/dashboard/requests");
+      router.push(searchParams.get("next") || "/dashboard");
     } catch (err) {
       setError(getErrorMessage(err, "登录失败"));
     } finally {
@@ -171,18 +171,20 @@ export default function LoginForm() {
         </div>
       </div>
 
-      <div className="relative hidden h-screen flex-1 items-center justify-center overflow-hidden bg-gradient-to-b from-[#31275A] to-[#5C49A3] px-10 lg:flex">
+      <div className="relative hidden h-screen flex-1 items-center justify-center overflow-hidden bg-sentry-night px-10 lg:flex">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(106,95,193,0.4),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(250,127,170,0.18),transparent_50%)]" />
         <div className="pointer-events-none absolute inset-0 bg-[url('/images/dither.svg')] bg-bottom bg-no-repeat bg-contain" />
-        <div className="relative z-10 flex w-full max-w-[564px] flex-col items-center gap-20 text-center text-white">
+        <div className="pointer-events-none absolute top-0 left-0 h-[2px] w-full bg-gradient-to-r from-sentry-lime via-sentry-violet to-sentry-pink" />
+        <div className="relative z-10 flex w-full max-w-[564px] flex-col items-center gap-20 text-center text-ink">
           <div className="w-full space-y-5">
-            <p className="typo-h3 text-white">
+            <p className="typo-h3 text-ink">
               &quot;Mem0
               帮助我们为每位学生实现了真正的个性化辅导，集成只花了一个周末。&quot;
             </p>
             <div className="flex flex-col items-center gap-[7px]">
               <div className="flex flex-col items-center gap-1">
-                <p className="typo-body-sm text-white">Michael Tong</p>
-                <p className="typo-body-xs text-white">CTO, RevisionDojo</p>
+                <p className="typo-body-sm text-ink-muted">Michael Tong</p>
+                <p className="typo-body-xs text-ink-muted">CTO, RevisionDojo</p>
               </div>
               <Image
                 src="/images/micheal.png"
@@ -194,8 +196,8 @@ export default function LoginForm() {
             </div>
           </div>
           <div className="flex w-full flex-col items-center gap-3">
-            <p className="typo-body text-white">超过 10 万开发者信赖</p>
-            <div className="flex items-center justify-center gap-8 text-white">
+            <p className="typo-body text-ink-muted">超过 10 万开发者信赖</p>
+            <div className="flex items-center justify-center gap-8 text-ink">
               <div className="h-6 shrink-0">
                 <Image
                   src="/images/logos/aws.svg"

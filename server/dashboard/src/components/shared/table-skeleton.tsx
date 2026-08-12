@@ -9,7 +9,7 @@ export function TableSkeleton({ rows = 5, columns = 5 }: TableSkeletonProps) {
   return (
     <div className="w-full">
       {/* Table Header */}
-      <div className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
+      <div className="border-b border-memBorder-primary bg-surface-default-secondary">
         <div className="flex items-center gap-4 px-4 py-3">
           <Skeleton className="size-4 rounded" />
           {[...Array(columns - 1)].map((_, i) => (
@@ -19,7 +19,7 @@ export function TableSkeleton({ rows = 5, columns = 5 }: TableSkeletonProps) {
       </div>
 
       {/* Table Rows */}
-      <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+      <div className="divide-y divide-memBorder-primary">
         {[...Array(rows)].map((_, rowIndex) => (
           <div key={rowIndex} className="flex items-center gap-4 px-4 py-3">
             <Skeleton className="size-4 rounded" />

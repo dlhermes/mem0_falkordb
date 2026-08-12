@@ -54,21 +54,27 @@ export function EventBadge({
     return null;
   }
 
+  const badgeSurface: Record<BadgeVariant, string> = {
+    add: "bg-sentry-success/15 text-[#4cc38a]",
+    update: "bg-sentry-lime/15 text-sentry-lime",
+    retrieved: "bg-sentry-violet/20 text-[#a89fe0]",
+    delete: "bg-sentry-danger/15 text-[#e5484d]",
+    user: "bg-sentry-pink/15 text-sentry-pink",
+  };
+
   return (
     <div
       className={cn(
-        "inline-flex min-w-0 max-w-full items-center justify-center gap-1 overflow-hidden rounded-sm px-1.5 py-0.5",
+        "inline-flex min-w-0 max-w-full items-center justify-center gap-1 overflow-hidden rounded-full px-2 py-0.5",
         variant === "secondary"
-          ? "bg-surface-default-fg-secondary"
-          : "bg-surface-default-tertiary",
+          ? "bg-surface-default-fg-secondary text-onSurface-default-secondary"
+          : badgeSurface[badgeVariant],
       )}
       aria-label={`${event} ${badgeVariant} count`}
     >
-      {showIcon && (
-        <Icon className="size-3.5 shrink-0 text-onSurface-default-secondary" />
-      )}
+      {showIcon && <Icon className="size-3.5 shrink-0 text-current" />}
       {content && (
-        <span className="min-w-0 truncate font-dm-mono text-xs font-normal leading-[18px] text-onSurface-default-secondary">
+        <span className="min-w-0 truncate font-dm-mono text-xs font-normal leading-[18px] text-current">
           {content}
         </span>
       )}

@@ -9,10 +9,10 @@ export const renderLoader = (
   if (condition) {
     return (
       <div
-        className={`flex justify-center items-center size-full absolute opacity-80 bg-white dark:bg-black min-h-full ${className}`}
+        className={`flex justify-center items-center size-full absolute opacity-80 bg-surface-default-primary min-h-full ${className}`}
       >
         {showLoader && (
-          <Loader2 className="animate-spin size-7 text-gray-900 dark:text-gray-100" />
+          <Loader2 className="animate-spin size-7 text-onSurface-default-secondary" />
         )}
       </div>
     );

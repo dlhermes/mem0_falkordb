@@ -19,7 +19,7 @@ export const TruncatedText: React.FC<{ text: string; limit?: number }> = ({
       </HoverCardTrigger>
       {createPortal(
         <HoverCardContent
-          className="text-foreground p-4 shadow-lg rounded-lg z-[9999]"
+          className="text-foreground p-4 rounded-lg z-[9999]"
           style={{
             minWidth: "400px",
             maxWidth: "600px",

@@ -39,20 +39,20 @@ export function UpgradeBanner({
   return (
     <div
       className={cn(
-        "flex items-center gap-3 px-4 py-2.5 rounded-md typo-body-xs font-fustat",
+        "flex items-center gap-3 px-4 py-2.5 rounded-md typo-body-xs font-fustat border bg-surface-default-tertiary text-onSurface-default-secondary",
         variant === "cloud"
-          ? "bg-memGold-100 border-l-2 border-memGold-500"
-          : "bg-memRed-100 border-l-2 border-memRed-400",
+          ? "border-l-2 border-l-sentry-lime"
+          : "border-l-2 border-l-sentry-danger",
       )}
     >
-      <p className="flex-1 text-onSurface-default-secondary">{message}</p>
+      <p className="flex-1">{message}</p>
       <a
         href={ctaUrl}
         target="_blank"
         rel="noopener noreferrer"
         className={cn(
           "text-xs font-medium whitespace-nowrap underline",
-          variant === "cloud" ? "text-memGold-700" : "text-memRed-600",
+          variant === "cloud" ? "text-sentry-lime" : "text-sentry-danger",
         )}
       >
         {ctaLabel}

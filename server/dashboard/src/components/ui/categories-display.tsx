@@ -32,16 +32,16 @@ export function CategoriesDisplay({
 
   const getCategoryColor = (category: string) => {
     const colors = [
-      "bg-purple-500",
-      "bg-blue-500",
-      "bg-green-500",
-      "bg-yellow-500",
-      "bg-red-500",
-      "bg-indigo-500",
-      "bg-pink-500",
-      "bg-teal-500",
-      "bg-orange-500",
-      "bg-cyan-500",
+      "bg-sentry-lime",
+      "bg-sentry-violet",
+      "bg-sentry-pink",
+      "bg-sentry-success",
+      "bg-sentry-warning",
+      "bg-sentry-violet-mid",
+      "bg-[#a89fe0]",
+      "bg-sentry-danger",
+      "bg-sentry-violet-deep",
+      "bg-sentry-lime-hover",
     ];
 
     let hash = 0;
@@ -72,7 +72,7 @@ export function CategoriesDisplay({
           left: `${popoverPosition.left}px`,
           zIndex: 999999,
         }}
-        className={`p-3 bg-surface-default-tertiary border border-memBorder-primary rounded-lg shadow-xl flex flex-col gap-2.5 min-w-max opacity-100 visible`}
+        className={`p-3 bg-surface-default-tertiary border border-memBorder-primary rounded-lg shadow-md flex flex-col gap-2.5 min-w-max opacity-100 visible`}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >

@@ -35,13 +35,7 @@ type BundledProviders = {
   embedder: string[];
 };
 
-const STEPS = [
-  "管理员账户",
-  "提供商",
-  "API 密钥",
-  "使用场景",
-  "快速测试",
-];
+const STEPS = ["管理员账户", "提供商", "API 密钥", "使用场景", "快速测试"];
 const STEP_TITLES = [
   "创建你的管理员账户",
   "查看提供商配置",
@@ -313,8 +307,8 @@ export default function SetupPage() {
                 className={cn(
                   "size-7 rounded-full flex items-center justify-center text-xs font-medium",
                   i <= step
-                    ? "bg-memPurple-500 text-white"
-                    : "bg-memNeutral-200 text-onSurface-default-tertiary",
+                    ? "bg-sentry-lime text-sentry-on-lime"
+                    : "bg-surface-default-tertiary text-onSurface-default-tertiary",
                 )}
               >
                 {i < step ? <Check className="size-3.5" /> : i + 1}
@@ -323,7 +317,7 @@ export default function SetupPage() {
                 <div
                   className={cn(
                     "w-8 h-[2px]",
-                    i < step ? "bg-memPurple-500" : "bg-memNeutral-200",
+                    i < step ? "bg-sentry-lime" : "bg-surface-default-tertiary",
                   )}
                 />
               )}
@@ -382,9 +376,7 @@ export default function SetupPage() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="setup-confirm-password">
-                    确认密码
-                  </Label>
+                  <Label htmlFor="setup-confirm-password">确认密码</Label>
                   <Input
                     id="setup-confirm-password"
                     type="password"
@@ -407,7 +399,8 @@ export default function SetupPage() {
                 {!serverHasLlmKey && (
                   <div className="rounded-md border border-memBorder-primary bg-surface-default-secondary p-3">
                     <p className="text-xs text-onSurface-default-tertiary">
-                      服务器上尚未配置 LLM 提供商 API 密钥。请在下方粘贴一个以继续——它将被保存到服务器，并用于所有记忆操作。
+                      服务器上尚未配置 LLM 提供商 API
+                      密钥。请在下方粘贴一个以继续——它将被保存到服务器，并用于所有记忆操作。
                     </p>
                   </div>
                 )}
@@ -455,9 +448,7 @@ export default function SetupPage() {
                     value={llmApiKey}
                     onChange={(e) => setLlmApiKey(e.target.value)}
                     placeholder={
-                      serverHasLlmKey
-                        ? "留空以保留现有密钥"
-                        : "sk-..."
+                      serverHasLlmKey ? "留空以保留现有密钥" : "sk-..."
                     }
                     className="font-mono text-sm"
                   />
@@ -591,7 +582,7 @@ export default function SetupPage() {
                     value={useCase}
                     onChange={(e) => setUseCase(e.target.value)}
                     placeholder="例如：一个能记住我偏好的个人助理"
-                    className="flex w-full rounded-md border border-memBorder-primary bg-surface-default-primary px-3 py-2 text-sm placeholder:text-onSurface-default-tertiary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-memPurple-500 min-h-[80px] resize-y"
+                    className="flex w-full rounded-md border border-memBorder-primary bg-surface-default-primary px-3 py-2 text-sm placeholder:text-onSurface-default-tertiary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sentry-violet min-h-[80px] resize-y"
                   />
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -604,7 +595,7 @@ export default function SetupPage() {
                       onClick={() => setUseCase(preset)}
                       className={cn(
                         useCase === preset &&
-                          "border-memPurple-500 text-memPurple-500",
+                          "bg-sentry-violet-mid text-white border-transparent",
                       )}
                     >
                       {preset}
@@ -642,33 +633,24 @@ export default function SetupPage() {
                           setTestMessage(res.data.test_message);
                         }
                       } catch (err) {
-                        setError(
-                          getErrorMessage(
-                            err,
-                            "生成指令失败",
-                          ),
-                        );
+                        setError(getErrorMessage(err, "生成指令失败"));
                       } finally {
                         setIsGeneratingInstructions(false);
                       }
                     }}
                   >
-                    {isGeneratingInstructions
-                      ? "正在生成指令..."
-                      : "生成指令"}
+                    {isGeneratingInstructions ? "正在生成指令..." : "生成指令"}
                   </Button>
                 </div>
                 {customInstructions && (
                   <div className="space-y-3">
                     <div className="space-y-1">
-                      <Label htmlFor="setup-instructions">
-                        生成的指令
-                      </Label>
+                      <Label htmlFor="setup-instructions">生成的指令</Label>
                       <textarea
                         id="setup-instructions"
                         value={customInstructions}
                         onChange={(e) => setCustomInstructions(e.target.value)}
-                        className="flex w-full rounded-md border border-memBorder-primary bg-surface-default-primary px-3 py-2 text-sm placeholder:text-onSurface-default-tertiary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-memPurple-500 min-h-[120px] resize-y"
+                        className="flex w-full rounded-md border border-memBorder-primary bg-surface-default-primary px-3 py-2 text-sm placeholder:text-onSurface-default-tertiary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sentry-violet min-h-[120px] resize-y"
                       />
                     </div>
                     <Button
@@ -683,9 +665,7 @@ export default function SetupPage() {
                           });
                           handleContinueToQuickTest();
                         } catch (err) {
-                          setError(
-                            getErrorMessage(err, "保存指令失败"),
-                          );
+                          setError(getErrorMessage(err, "保存指令失败"));
                         } finally {
                           setIsLoading(false);
                         }
@@ -708,7 +688,8 @@ export default function SetupPage() {
                   <Label>测试你的设置</Label>
                   {!apiUrl && (
                     <p className="text-xs text-onSurface-danger-primary">
-                      尚未设置 NEXT_PUBLIC_API_URL。请在 .env 中设置并在运行此测试前重启。
+                      尚未设置 NEXT_PUBLIC_API_URL。请在 .env
+                      中设置并在运行此测试前重启。
                     </p>
                   )}
                   <pre className="text-xs bg-surface-default-secondary p-3 rounded font-mono overflow-x-auto">{`curl -X POST ${apiUrl}/memories \\

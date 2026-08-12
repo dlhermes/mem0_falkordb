@@ -327,7 +327,7 @@ function ScoreHistogram({
               {b.value}
             </span>
             <div
-              className="w-full rounded-t bg-surface-default-brand"
+              className="w-full rounded-t bg-sentry-violet"
               style={{ height: `${(b.value / max) * 100}%` }}
             />
           </div>
@@ -376,7 +376,7 @@ function RecallFunnel({ stages }: { stages: RecallStageStat[] }) {
             <span className="text-onSurface-default-secondary">{r.name}</span>
             <div className="flex h-5 items-center justify-center">
               <div
-                className="h-full rounded bg-surface-default-brand"
+                className="h-full rounded bg-sentry-violet"
                 style={{ width: `${(r.avg_count / maxCount) * 100}%` }}
               />
             </div>
@@ -397,7 +397,7 @@ function RecallFunnel({ stages }: { stages: RecallStageStat[] }) {
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-surface-default-secondary">
               <div
-                className="h-full rounded-full bg-sky-500"
+                className="h-full rounded-full bg-sentry-lime"
                 style={{ width: `${(r.avg_latency_ms / maxLatency) * 100}%` }}
               />
             </div>
@@ -680,7 +680,7 @@ export default function AnalyticsPage() {
                         type="monotone"
                         dataKey="queries"
                         name="查询量"
-                        stroke="#8f74e0"
+                        stroke="#c2ef4e"
                         strokeWidth={2}
                         dot={false}
                       />
@@ -688,7 +688,7 @@ export default function AnalyticsPage() {
                         type="monotone"
                         dataKey="zero_hits"
                         name="零命中"
-                        stroke="#f43f5e"
+                        stroke="#fa7faa"
                         strokeWidth={2}
                         dot={false}
                       />
@@ -722,17 +722,17 @@ export default function AnalyticsPage() {
                   {
                     label: "有用",
                     value: feedback.type_distribution.useful,
-                    barClass: "bg-emerald-500",
+                    barClass: "bg-sentry-success",
                   },
                   {
                     label: "无用",
                     value: feedback.type_distribution.useless,
-                    barClass: "bg-rose-500",
+                    barClass: "bg-sentry-danger",
                   },
                   {
                     label: "纠正",
                     value: feedback.type_distribution.correction,
-                    barClass: "bg-amber-500",
+                    barClass: "bg-sentry-warning",
                   },
                 ]}
               />

@@ -49,7 +49,7 @@ const ScrollBar = React.forwardRef<
     )}
     {...props}
   >
-    <ScrollAreaPrimitive.ScrollAreaThumb className="relative flex-1 max-w-1 rounded-full bg-accent" />
+    <ScrollAreaPrimitive.ScrollAreaThumb className="relative flex-1 max-w-1 rounded-full bg-memNeutral-500" />
   </ScrollAreaPrimitive.ScrollAreaScrollbar>
 ));
 ScrollBar.displayName = ScrollAreaPrimitive.ScrollAreaScrollbar.displayName;

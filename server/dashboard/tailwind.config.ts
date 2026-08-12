@@ -29,9 +29,22 @@ const config = {
         "2.5": "0.625rem",
       },
       fontFamily: {
-        sans: ["Inter", "system-ui"],
+        sans: [
+          "Rubik",
+          "Inter",
+          "var(--font-inter)",
+          "system-ui",
+          "sans-serif",
+        ],
         serif: ["ui-serif", "Georgia"],
-        mono: ["Monaco", "Consolas", '"Courier New"', "monospace"],
+        mono: [
+          "Monaco",
+          "ui-monospace",
+          "SFMono-Regular",
+          "Menlo",
+          "Consolas",
+          "monospace",
+        ],
         "inter-display": ["var(--font-inter)", "sans-serif"], // Now uses same as Inter
         inter: ["var(--font-inter)", "sans-serif"],
         roboto: ["var(--font-roboto-mono)", "sans-serif"],
@@ -129,6 +142,7 @@ const config = {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          hover: "hsl(var(--primary-hover))",
           border: "var(--border-primary)",
           borderLight: "rgba(39, 39, 42, 1)",
         },
@@ -160,6 +174,36 @@ const config = {
         destructive: {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",
+        },
+        success: {
+          DEFAULT: "hsl(var(--success))",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+        },
+        sentry: {
+          night: "var(--sentry-night)",
+          canvas: "var(--sentry-canvas)",
+          "canvas-dark": "var(--sentry-canvas-dark)",
+          "surface-1": "var(--sentry-surface-1)",
+          "surface-2": "var(--sentry-surface-2)",
+          "surface-3": "var(--sentry-surface-3)",
+          hairline: "var(--sentry-hairline)",
+          "hairline-strong": "var(--sentry-hairline-strong)",
+          lime: "var(--sentry-lime)",
+          "lime-hover": "var(--sentry-lime-hover)",
+          "on-lime": "var(--sentry-on-lime)",
+          violet: "var(--sentry-violet)",
+          "violet-mid": "var(--sentry-violet-mid)",
+          "violet-deep": "var(--sentry-violet-deep)",
+          pink: "var(--sentry-pink)",
+          ink: "var(--sentry-ink)",
+          "ink-muted": "var(--sentry-ink-muted)",
+          "ink-subtle": "var(--sentry-ink-subtle)",
+          "ink-faint": "var(--sentry-ink-faint)",
+          success: "var(--sentry-success)",
+          warning: "var(--sentry-warning)",
+          danger: "var(--sentry-danger)",
         },
         muted: {
           DEFAULT: "hsl(var(--muted))",
@@ -281,9 +325,7 @@ const config = {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
-      boxShadow: {
-        custom: "0px 3px 10px 0px rgba(0, 0, 0, 0.08)",
-      },
+      boxShadow: {},
       keyframes: {
         "accordion-down": {
           from: {

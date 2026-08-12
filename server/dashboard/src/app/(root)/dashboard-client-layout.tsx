@@ -40,8 +40,7 @@ export function DashboardClientLayout({
           <AuthProvider>
             <ThemeProvider
               attribute="class"
-              defaultTheme="light"
-              enableSystem
+              defaultTheme="dark"
               disableTransitionOnChange
             >
               <ClientLayout>{children}</ClientLayout>

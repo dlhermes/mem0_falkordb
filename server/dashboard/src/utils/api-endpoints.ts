@@ -10,6 +10,7 @@ export const AUTH_ENDPOINTS = {
 
 export const MEMORY_ENDPOINTS = {
   BASE: "/memories",
+  SEARCH: "/memories/search",
   BY_ID: (memoryId: string) => `/memories/${memoryId}`,
   HISTORY: (memoryId: string) => `/memories/${memoryId}/history`,
   CONFIGURE: "/configure",
@@ -37,4 +38,13 @@ export const EVOLVE_ENDPOINTS = {
   REPORT: "/evolve/report",
   RETAIN: (memoryId: string) =>
     `/evolve/memory/${encodeURIComponent(memoryId)}/retain`,
+} as const;
+
+export const SEARCH_KEYWORDS_ENDPOINTS = {
+  BASE: "/search-keywords",
+  BY_ID: (id: number) => `/search-keywords/${id}`,
+} as const;
+
+export const SEARCH_ENDPOINTS = {
+  BASE: "/search",
 } as const;

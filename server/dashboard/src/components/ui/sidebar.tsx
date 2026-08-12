@@ -84,7 +84,7 @@ const SidebarGroupLabel = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "flex w-full items-center gap-1 px-[6px] py-1 text-[10px] font-medium uppercase leading-[140%] text-onSurface-default-tertiary font-dm-mono",
+      "flex w-full items-center gap-1 px-2 pt-3.5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] leading-none text-onSurface-default-tertiary",
       className,
     )}
     {...props}
@@ -109,13 +109,13 @@ const SidebarMenuItem = React.forwardRef<
 SidebarMenuItem.displayName = "SidebarMenuItem";
 
 const menuButtonVariants = cva(
-  "group flex w-full items-center gap-1.5 rounded p-1.5 font-fustat text-xs font-semibold leading-[140%] transition-colors",
+  "group relative flex w-full items-center gap-1.5 rounded p-1.5 font-fustat text-[13px] font-medium leading-[150%] transition-colors",
   {
     variants: {
       active: {
-        true: "bg-surface-default-tertiary text-onSurface-default-primary [&_svg]:text-onSurface-default-primary",
+        true: "bg-sentry-surface-2 text-onSurface-default-primary [&_svg]:text-onSurface-default-primary before:absolute before:left-0 before:top-0 before:h-full before:w-[2px] before:bg-sentry-lime",
         false:
-          "bg-transparent text-onSurface-default-secondary [&_svg]:text-onSurface-default-tertiary hover:bg-surface-default-primary-hover [&_svg]:group-hover:text-onSurface-default-secondary",
+          "bg-transparent text-onSurface-default-tertiary [&_svg]:text-onSurface-default-tertiary hover:bg-sentry-surface-1 hover:text-onSurface-default-secondary [&_svg]:group-hover:text-onSurface-default-secondary",
       },
       collapsed: {
         true: "!w-8 !h-8 !p-2 items-center justify-center",
@@ -127,13 +127,13 @@ const menuButtonVariants = cva(
         collapsed: true,
         active: false,
         className:
-          "bg-surface-default-secondary hover:bg-surface-default-primary-hover [&_svg]:text-onSurface-default-tertiary [&_svg]:group-hover:text-onSurface-default-secondary",
+          "bg-surface-default-secondary hover:bg-sentry-surface-1 [&_svg]:text-onSurface-default-tertiary [&_svg]:group-hover:text-onSurface-default-secondary",
       },
       {
         collapsed: true,
         active: true,
         className:
-          "bg-surface-default-tertiary [&_svg]:text-onSurface-default-primary",
+          "bg-sentry-surface-2 [&_svg]:text-onSurface-default-primary before:absolute before:left-0 before:top-0 before:h-full before:w-[2px] before:bg-sentry-lime",
       },
     ],
     defaultVariants: {
@@ -229,10 +229,10 @@ const SidebarMenuSubButton = React.forwardRef<
     <Comp
       ref={ref}
       className={cn(
-        "group flex w-full items-center gap-1.5 rounded p-1.5 font-fustat text-xs font-semibold leading-[140%] transition-colors",
+        "group flex w-full items-center gap-1.5 rounded p-1.5 font-fustat text-[13px] font-medium leading-[150%] transition-colors",
         active
-          ? "bg-surface-default-tertiary text-onSurface-default-primary [&_svg]:text-onSurface-default-primary"
-          : "bg-transparent text-onSurface-default-secondary [&_svg]:text-onSurface-default-tertiary hover:bg-surface-default-primary-hover hover:[&_svg]:text-onSurface-default-secondary",
+          ? "bg-sentry-surface-2 text-onSurface-default-primary [&_svg]:text-onSurface-default-primary before:absolute before:left-0 before:top-0 before:h-full before:w-[2px] before:bg-sentry-lime"
+          : "bg-transparent text-onSurface-default-tertiary [&_svg]:text-onSurface-default-tertiary hover:bg-sentry-surface-1 hover:[&_svg]:text-onSurface-default-secondary",
         className,
       )}
       {...props}

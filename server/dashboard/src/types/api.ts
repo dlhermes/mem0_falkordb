@@ -7,6 +7,23 @@ export interface Memory {
   updated_at?: string;
 }
 
+export interface MemorySearchResult extends Memory {
+  score?: number;
+}
+
+export interface MemoryHistoryEntry {
+  id: string;
+  memory_id: string;
+  old_memory: string;
+  new_memory: string;
+  event: string;
+  created_at: string;
+  updated_at: string;
+  is_deleted: boolean;
+  actor_id?: string;
+  role?: string;
+}
+
 export interface ApiKey {
   id: string;
   label: string;

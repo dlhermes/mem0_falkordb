@@ -20,14 +20,14 @@ export default function DashboardLayout({
     <>
       <NavWrapper />
       <div
-        className="mt-[48px] rounded-tl-lg relative h-[calc(100vh-56px)] bg-surface-default-primary border border-memBorder-primary overflow-hidden transition-all duration-300 ease-in-out font-fustat"
+        className="mt-[52px] relative h-[calc(100vh-52px)] bg-transparent overflow-hidden transition-all duration-300 ease-in-out font-fustat"
         style={{
           left: `${isSidebarCollapsed ? COLLAPSED_SIDEBAR_WIDTH : SIDEBAR_WIDTH}px`,
-          width: `calc(100vw - ${isSidebarCollapsed ? COLLAPSED_SIDEBAR_WIDTH + 8 : SIDEBAR_WIDTH + 8}px)`,
+          width: `calc(100vw - ${isSidebarCollapsed ? COLLAPSED_SIDEBAR_WIDTH : SIDEBAR_WIDTH}px)`,
         }}
       >
-        <ScrollArea type="scroll" className="h-[calc(100vh-70px)]">
-          <div className="mx-auto px-6 py-6 flex-1 flex-col space-y-4">
+        <ScrollArea type="scroll" className="h-full">
+          <div className="mx-auto p-5 flex-1 flex-col space-y-3">
             {children}
           </div>
         </ScrollArea>
