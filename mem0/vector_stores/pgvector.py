@@ -356,7 +356,7 @@ class PGVector(VectorStoreBase):
                     self._col(),
                 )
             )
-            self.ensure_temporal_index()
+        self.ensure_temporal_index()
 
     def insert(self, vectors: list[list[float]], payloads=None, ids=None) -> None:
         if vectors and self.embedding_model_dims is None:
