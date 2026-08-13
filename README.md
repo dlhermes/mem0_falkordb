@@ -49,6 +49,7 @@ mem0 是一个为 AI Agent 提供持久记忆的开源库（存/搜/删 + LLM �
 | 语义去重 | cron 每日 | 三层判定（向量粗筛 → 字符相似 → LLM 二元确认），合并近重复记忆，不压缩内容 |
 | 矛盾检测 | `MEM0_ENABLE_CONTRADICTION=true` | 写入时实时判定，自动清理冲突旧记忆 |
 | 时间推理 | 默认开启 | 每条记忆自动标注 PAST/PRESENT/FUTURE/TIMELESS，可过滤 |
+| 时间声部检索 | 默认开启 | 查询带时间意图（最近/昨天/上周…）时按时间召回记忆并入候选池，融合排序让近期记忆系统性靠前（`MEM0_TEMPORAL_*` 可配） |
 | 记忆热度 | 默认开启 | access_count / last_access 随搜索更新，热度参与排序（权重可配） |
 | 显式反馈闭环 | 默认开启 | useful/useless/correction 三档反馈直接调整记忆热度分，可审计可逆 |
 
@@ -59,7 +60,7 @@ mem0 是一个为 AI Agent 提供持久记忆的开源库（存/搜/删 + LLM �
 | 搜索质量观测 | 每次搜索落日志：查询词/召回数/平均分/耗时/是否零命中 |
 | 进化循环 | cron 每日：高频记忆自动提权 + 零命中统计 + 长期未召回清单 |
 | Analytics 面板 | Dashboard 五个真实数据面板（中文）：搜索质量/反馈闭环/热度健康/操作概览/召回漏斗 |
-| RECALL 召回漏斗 | 搜索链路五阶段（候选池→阈值→衰减→图→rerank→最终）命中数与耗时可视化 |
+| RECALL 召回漏斗 | 搜索链路七阶段（候选池→阈值→衰减→图→时间声部→rerank→最终）命中数与耗时可视化 |
 | 清理/保留决策 | 面板上直接对未召回记忆点「清理」或「保留」，不用看文档 |
 
 ### 部署与兼容
@@ -93,7 +94,7 @@ mem0 是一个为 AI Agent 提供持久记忆的开源库（存/搜/删 + LLM �
 │                                      │           │
 │  ┌─────────── 可观测/进化层 ─────────┐           │
 │  │ evolve_queries / evolve_salience │           │
-│  │ evolve_feedback / trace 五阶段    │           │
+│  │ evolve_feedback / trace 七阶段    │           │
 │  └───────────────────────────────────┘          │
 └─────────────────────────────────────────────────┘
                      │
@@ -244,6 +245,11 @@ MEM0_EVOLVE_RANK_WEIGHT=0.2         # 热度排序加成权重（0 = 不生效�
 MEM0_RERANK_SCORE_THRESHOLD=0.4     # rerank 后保留最低分
 MEM0_RERANK_QUERY_MAX_CHARS=4000    # rerank query 截断
 MEM0_RERANK_DOCS_MAX_CHARS=6000     # rerank 候选文档分批阈值
+MEM0_TEMPORAL_VOICE=true              # 时间声部检索（默认开）
+MEM0_TEMPORAL_WINDOW_DAYS=7           # 时间意图「最近」默认窗口（天）
+MEM0_TEMPORAL_HALFLIFE_HOURS=168      # 时间衰减半衰期（小时，7 天）
+MEM0_TEMPORAL_TOP_K=20                # 时间召回条数上限
+MEM0_TEMPORAL_FORCE_FULL=true         # 时间意图查询强制 full 档（默认开）
 ```
 
 完整变量清单见 [server/README.md](server/README.md) 性能调优节。
@@ -292,6 +298,8 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 | `full` | embedding + BM25 + 图 + rerank（默认） | 0% |
 
 深度自动判定在 `Memory.search()` 入口执行；词表存 SQLite `search_keywords` 表（路径 `/app/history/history.db`），增删词即生效，无需重启。每次搜索实际走的深度记录在 `evolve_queries.depth`，可在 Analytics「召回漏斗」观测。
+
+**时间意图自动升档**：查询带时间意图（如"最近部署了什么"）时，即使被路由到 `minimal`/`standard` 档也会强制按 `full` 执行（时间声部与 rerank 依赖 full 链路），保证"最近发生了什么"类查询拿到时间加权结果。可用 `MEM0_TEMPORAL_FORCE_FULL=false` 关闭。
 
 ### 记忆热度体系
 
@@ -353,7 +361,7 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 
 ### RECALL 召回漏斗
 
-搜索链路每个阶段采集命中数与耗时：候选池 → 阈值过滤 → 时间衰减 → 图召回 → 重排序 → 最终。用于定位「搜不到」的病灶（哪一阶段丢的）与性能瓶颈（哪一阶段慢）。
+搜索链路每个阶段采集命中数与耗时：候选池 → 阈值过滤 → 时间衰减 → 图召回 → **时间声部** → 重排序 → 最终。用于定位「搜不到」的病灶（哪一阶段丢的）与性能瓶颈（哪一阶段慢）。
 
 ### 语义去重（cron 每日 05:00）
 
@@ -372,6 +380,16 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 ### 时间推理
 
 每条记忆自动标注 `temporal`（PAST/PRESENT/FUTURE/TIMELESS），搜索可用 `filters: {"temporal": "FUTURE"}` 过滤；零额外 LLM 调用。
+
+### 时间声部检索
+
+解决"最近部署了什么""昨天说过什么"这类查询——语义检索对时间维度是盲的，新旧记忆混在一起。时间声部让"时间"成为一路独立检索信号：
+
+- **时间意图检测**：查询含中英文时间词（最近/近 N 天/N 小时前/昨天/上周/今年… 或 ISO 日期）时识别出时间窗口；强信号（最近/最新，w=0.7）与弱信号（昨天/本周，w=0.4）分档；"今天天气怎么样"类语义查询（天气/新闻/汇率/股票/日程/待办）被排除表拦下，不触发
+- **时间召回**：按时间窗口从 pgvector 倒序召回（内容发生时间 `temporal_date` 优先、记录时间 `created_at` 回退，全链路 Asia/Shanghai 时区），过期/失效记忆过滤，表达式索引加速
+- **融合排序**：时间候选与向量/图候选一起过 rerank 并豁免阈值；时间意图下全部候选按 `w × 时间衰减分 + (1−w) × 语义分` 融合排序——近期记忆系统性靠前，普通查询零变化
+- **观测**：trace 新增 temporal 阶段与 `temporal_triggered` 标记，落 `evolve_queries` 表可在 Analytics「召回漏斗」查看触发情况
+- 开关与参数：`MEM0_TEMPORAL_VOICE` / `MEM0_TEMPORAL_WINDOW_DAYS` / `MEM0_TEMPORAL_HALFLIFE_HOURS` / `MEM0_TEMPORAL_TOP_K` / `MEM0_TEMPORAL_FORCE_FULL`
 
 ---
 

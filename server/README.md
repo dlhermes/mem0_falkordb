@@ -296,6 +296,16 @@ curl -s http://<llm-host>/v1/chat/completions \
 | `MEM0_RERANK_MAX_RETRIES` | `3` | SiliconFlow/Cohere/ZeroEntropy 客户端最大重试次数 |
 | `MEM0_RERANK_REQUEST_DELAY` | `0` | SiliconFlow 分批请求 / LLMReranker 逐文档调 LLM 时的请求间隔（秒），防 RPM 限制 |
 
+### 时间声部检索
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_TEMPORAL_VOICE` | `true` | 总开关；`false` 一键回退到纯现有检索（门控 + 开关双重保证零行为变化） |
+| `MEM0_TEMPORAL_WINDOW_DAYS` | `7` | 时间意图「最近/近期」的默认窗口天数 |
+| `MEM0_TEMPORAL_HALFLIFE_HOURS` | `168` | 时间衰减半衰期（小时）；7 天前记忆分数减半，`time_boost = 0.5^(age_hours/half_life)` |
+| `MEM0_TEMPORAL_TOP_K` | `20` | 时间召回条数上限 |
+| `MEM0_TEMPORAL_FORCE_FULL` | `true` | 时间意图查询强制按 full 档执行（时间声部依赖 full 链路的 rerank 融合）；`false` 时维持原路由深度 |
+
 ### 记忆衰减
 
 | 变量 | 默认值 | 说明 |
