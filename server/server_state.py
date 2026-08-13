@@ -145,17 +145,29 @@ def initialize_state(default_config: Dict[str, Any]) -> None:
         )
 
 
+def _config_file_path() -> str:
+    return os.environ.get("MEM0_CONFIG_PATH") or "/app/config.json"
+
+
+def _save_config_file(path: str, config: Dict[str, Any]) -> None:
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+
+
 def update_config(updates: Dict[str, Any]) -> Dict[str, Any]:
     global _current_config, _memory_instance
     with _state_lock:
         next_config = _merge_config(_current_config, updates)
+        _save_config_file(_config_file_path(), next_config)
         _current_config = next_config
         _memory_instance = _attach_delete_cleanup(
             _attach_salience_provider(Memory.from_config(next_config))
         )
-        overrides = _load_overrides()
-        overrides = _merge_config(overrides, updates)
-        _save_overrides(overrides)
         return deepcopy(_current_config)
 
 

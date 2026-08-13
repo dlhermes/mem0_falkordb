@@ -546,10 +546,14 @@ def list_bundled_providers(_auth=Depends(verify_auth)):
 
 @app.post("/configure", summary="Configure Mem0")
 def set_config(config: Dict[str, Any], _auth=Depends(require_admin)):
-    """Set memory configuration. Requires admin role."""
+    """Set memory configuration. Requires admin role.
+
+    Persists atomically to config.json (the authoritative source); the DB
+    overrides layer is no longer written. Restart the container to apply.
+    """
     _validate_bundled_providers(config)
     update_config(config)
-    return {"message": "Configuration set successfully"}
+    return {"message": "Configuration saved to config.json. Restart the container to apply."}
 
 
 @app.post("/generate-instructions", summary="Generate custom instructions from a use case")
