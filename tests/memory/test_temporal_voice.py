@@ -121,9 +121,10 @@ class TestSyncTemporalVoice:
 
         memory.vector_store.temporal_search.assert_not_called()
 
-    def test_standard_depth_does_not_call_temporal_search(self, monkeypatch):
+    def test_force_full_disabled_standard_depth_does_not_call_temporal_search(self, monkeypatch):
         _patch_harness(monkeypatch)
         monkeypatch.setenv("MEM0_SEARCH_DEPTH_AUTO", "false")
+        monkeypatch.setenv("MEM0_TEMPORAL_FORCE_FULL", "false")
         memory = make_sync_memory(
             vector_candidates=[{"id": "mem-v", "score": 0.7, "payload": _payload("x")}]
         )
@@ -181,6 +182,69 @@ class TestSyncTemporalVoice:
 
         result = Memory.search(memory, "最近部署了什么", filters={"user_id": "u1"}, rerank=True)
 
+        assert "mem-t" in [m["id"] for m in result["results"]]
+
+    def test_standard_depth_time_intent_upgrades_to_full(self, monkeypatch):
+        _patch_harness(monkeypatch)
+        monkeypatch.setenv("MEM0_SEARCH_DEPTH_AUTO", "false")
+        temporal = SimpleNamespace(
+            id="mem-t", score=0.9, payload=_payload("最近部署", temporal_date=_fmt(_SHANGHAI_TODAY))
+        )
+        memory = make_sync_memory(
+            vector_candidates=[{"id": "mem-v", "score": 0.7, "payload": _payload("x")}],
+            temporal_results=[temporal],
+        )
+
+        result = Memory.search(memory, "最近部署了什么", filters={"user_id": "u1"}, depth="standard", trace=True)
+
+        memory.vector_store.temporal_search.assert_called_once()
+        assert result["trace"]["depth"] == "full"
+        assert any(m.get("source") == "temporal" for m in result["results"])
+
+    def test_minimal_depth_time_intent_upgrades_to_full(self, monkeypatch):
+        _patch_harness(monkeypatch)
+        monkeypatch.setenv("MEM0_SEARCH_DEPTH_AUTO", "false")
+        temporal = SimpleNamespace(
+            id="mem-t", score=0.9, payload=_payload("昨天部署", temporal_date=_fmt(_SHANGHAI_TODAY))
+        )
+        memory = make_sync_memory(
+            vector_candidates=[{"id": "mem-v", "score": 0.7, "payload": _payload("x")}],
+            temporal_results=[temporal],
+        )
+
+        result = Memory.search(memory, "昨天部署了什么", filters={"user_id": "u1"}, depth="minimal", trace=True)
+
+        memory.vector_store.temporal_search.assert_called_once()
+        assert result["trace"]["depth"] == "full"
+        assert any(m.get("source") == "temporal" for m in result["results"])
+
+    def test_plain_query_standard_depth_not_upgraded(self, monkeypatch):
+        _patch_harness(monkeypatch)
+        monkeypatch.setenv("MEM0_SEARCH_DEPTH_AUTO", "false")
+        memory = make_sync_memory(
+            vector_candidates=[{"id": "mem-v", "score": 0.7, "payload": _payload("x")}]
+        )
+
+        result = Memory.search(memory, "部署了什么", filters={"user_id": "u1"}, depth="standard", trace=True)
+
+        memory.vector_store.temporal_search.assert_not_called()
+        assert result["trace"]["depth"] == "standard"
+
+    def test_standard_depth_time_intent_runs_rerank(self, monkeypatch):
+        _patch_harness(monkeypatch)
+        monkeypatch.setenv("MEM0_SEARCH_DEPTH_AUTO", "false")
+        reranker = _Reranker({"mem-v": 0.9, "mem-t": 0.3})
+        memory = make_sync_memory(
+            vector_candidates=[{"id": "mem-v", "score": 0.8, "payload": _payload("x")}],
+            temporal_results=[
+                SimpleNamespace(id="mem-t", score=0.9, payload=_payload("最近部署", temporal_date=_fmt(_SHANGHAI_TODAY)))
+            ],
+            reranker=reranker,
+        )
+
+        result = Memory.search(memory, "最近部署了什么", filters={"user_id": "u1"}, depth="standard", rerank=True)
+
+        memory.vector_store.temporal_search.assert_called_once()
         assert "mem-t" in [m["id"] for m in result["results"]]
 
     def test_fusion_sort_ranks_recent_first(self, monkeypatch):
@@ -334,3 +398,21 @@ async def test_async_no_intent_does_not_call_temporal_search(monkeypatch):
     await AsyncMemory.search(memory, "部署了什么", filters={"user_id": "u1"})
 
     memory.vector_store.temporal_search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_standard_depth_time_intent_upgrades_to_full(monkeypatch):
+    _patch_harness(monkeypatch)
+    monkeypatch.setenv("MEM0_SEARCH_DEPTH_AUTO", "false")
+    memory = make_async_memory(
+        vector_candidates=[{"id": "mem-v", "score": 0.7, "payload": _payload("x")}],
+        temporal_results=[
+            SimpleNamespace(id="mem-t", score=0.9, payload=_payload("最近部署", temporal_date=_fmt(_SHANGHAI_TODAY)))
+        ],
+    )
+
+    result = await AsyncMemory.search(memory, "最近部署了什么", filters={"user_id": "u1"}, depth="standard", trace=True)
+
+    memory.vector_store.temporal_search.assert_called_once()
+    assert result["trace"]["depth"] == "full"
+    assert any(m.get("source") == "temporal" for m in result["results"])

@@ -2050,6 +2050,21 @@ class Memory(MemoryBase):
             depth = self._resolve_depth(query, depth)
         else:
             depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
+
+        # Temporal voice: detect time intent regardless of depth and force an
+        # upgrade to full when it fires (MEM0_TEMPORAL_FORCE_FULL, default on)
+        # so the temporal merge + fused sort run for time-intent queries that
+        # would otherwise be routed to a shallower depth. Non-time-intent
+        # queries keep their resolved depth untouched.
+        _temporal_enabled = os.environ.get("MEM0_TEMPORAL_VOICE", "true").lower() == "true"
+        _temporal_window_days = int(os.environ.get("MEM0_TEMPORAL_WINDOW_DAYS", "7"))
+        _temporal_half_life = int(os.environ.get("MEM0_TEMPORAL_HALFLIFE_HOURS", "168"))
+        _temporal_top_k = int(os.environ.get("MEM0_TEMPORAL_TOP_K", "20"))
+        _force_full = os.environ.get("MEM0_TEMPORAL_FORCE_FULL", "true").lower() == "true"
+        _temporal_intent = detect_temporal_intent(query, window_days=_temporal_window_days) if _temporal_enabled else None
+        if _temporal_intent is not None and depth != "full" and _force_full:
+            depth = "full"
+
         _min_ttl = int(os.environ.get("MEM0_SEARCH_CACHE_TTL", "0"))
         _std_ttl = int(os.environ.get("MEM0_SEARCH_STD_CACHE_TTL", "0"))
         _cache_key = (query, json.dumps(effective_filters, sort_keys=True, default=str), trace)
@@ -2076,17 +2091,6 @@ class Memory(MemoryBase):
         search_start = time.perf_counter()
         _trace_stats = {} if trace else None
 
-        # Temporal voice: detect time intent (depth=full only) before vector
-        # search so the intent gates the temporal_search merge + fused sort.
-        _temporal_enabled = os.environ.get("MEM0_TEMPORAL_VOICE", "true").lower() == "true"
-        _temporal_window_days = int(os.environ.get("MEM0_TEMPORAL_WINDOW_DAYS", "7"))
-        _temporal_half_life = int(os.environ.get("MEM0_TEMPORAL_HALFLIFE_HOURS", "168"))
-        _temporal_top_k = int(os.environ.get("MEM0_TEMPORAL_TOP_K", "20"))
-        _temporal_intent = (
-            detect_temporal_intent(query, window_days=_temporal_window_days)
-            if (depth == "full" and _temporal_enabled)
-            else None
-        )
         _temporal_triggered = False
         _temporal_count = 0
         _temporal_latency_ms = 0.0
@@ -4305,6 +4309,21 @@ class AsyncMemory(MemoryBase):
             depth = self._resolve_depth(query, depth)
         else:
             depth = depth or os.environ.get("MEM0_SEARCH_DEPTH_DEFAULT", "full")
+
+        # Temporal voice: detect time intent regardless of depth and force an
+        # upgrade to full when it fires (MEM0_TEMPORAL_FORCE_FULL, default on)
+        # so the temporal merge + fused sort run for time-intent queries that
+        # would otherwise be routed to a shallower depth. Non-time-intent
+        # queries keep their resolved depth untouched.
+        _temporal_enabled = os.environ.get("MEM0_TEMPORAL_VOICE", "true").lower() == "true"
+        _temporal_window_days = int(os.environ.get("MEM0_TEMPORAL_WINDOW_DAYS", "7"))
+        _temporal_half_life = int(os.environ.get("MEM0_TEMPORAL_HALFLIFE_HOURS", "168"))
+        _temporal_top_k = int(os.environ.get("MEM0_TEMPORAL_TOP_K", "20"))
+        _force_full = os.environ.get("MEM0_TEMPORAL_FORCE_FULL", "true").lower() == "true"
+        _temporal_intent = detect_temporal_intent(query, window_days=_temporal_window_days) if _temporal_enabled else None
+        if _temporal_intent is not None and depth != "full" and _force_full:
+            depth = "full"
+
         _min_ttl = int(os.environ.get("MEM0_SEARCH_CACHE_TTL", "0"))
         _std_ttl = int(os.environ.get("MEM0_SEARCH_STD_CACHE_TTL", "0"))
         _cache_key = (query, json.dumps(effective_filters, sort_keys=True, default=str), trace)
@@ -4331,17 +4350,6 @@ class AsyncMemory(MemoryBase):
         search_start = time.perf_counter()
         _trace_stats = {} if trace else None
 
-        # Temporal voice: detect time intent (depth=full only) before vector
-        # search so the intent gates the temporal_search merge + fused sort.
-        _temporal_enabled = os.environ.get("MEM0_TEMPORAL_VOICE", "true").lower() == "true"
-        _temporal_window_days = int(os.environ.get("MEM0_TEMPORAL_WINDOW_DAYS", "7"))
-        _temporal_half_life = int(os.environ.get("MEM0_TEMPORAL_HALFLIFE_HOURS", "168"))
-        _temporal_top_k = int(os.environ.get("MEM0_TEMPORAL_TOP_K", "20"))
-        _temporal_intent = (
-            detect_temporal_intent(query, window_days=_temporal_window_days)
-            if (depth == "full" and _temporal_enabled)
-            else None
-        )
         _temporal_triggered = False
         _temporal_count = 0
         _temporal_latency_ms = 0.0
