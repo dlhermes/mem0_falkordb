@@ -210,6 +210,15 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 
 ### config.json（模型与图存储）
 
+**配置架构**（优先级从低到高）：
+| 层 | 角色 | 生效方式 |
+|---|---|---|
+| `.env` | 默认配置项 | 修改后需重构容器（`docker compose up -d --force-recreate`） |
+| `config.json` | **权威配置源** | 改它 + 重启容器生效 |
+| DB `settings.config_overrides` | 调试兜底 | 平时不用；直接改 DB 值则以它为准（重启后仍优先） |
+
+dashboard 配置页是可视化编辑入口：保存 = 原子写 `config.json`（进程内热生效 + 重启后持久），不写 DB。
+
 | 块 | 说明 |
 |----|------|
 | `llm` | 事实提取大模型（OpenAI 兼容任意服务），支持 `fallbacks` 多层兜底 |
