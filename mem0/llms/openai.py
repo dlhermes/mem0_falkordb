@@ -95,6 +95,8 @@ class OpenAILLM(LLMBase):
 
             return processed_response
         else:
+            if response.choices[0].finish_reason == "length":
+                raise ValueError("LLM response truncated (finish_reason=length)")
             return response.choices[0].message.content
 
     def generate_response(
