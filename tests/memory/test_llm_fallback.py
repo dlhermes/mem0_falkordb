@@ -26,6 +26,45 @@ class HTTP500(Exception):
         self.status_code = 500
 
 
+class TypeErrorThenSuccessLLM:
+    def __init__(self, result=None):
+        self.result = result
+        self.call_count = 0
+        self.call_kwargs = []
+
+    def generate_response(self, messages, response_format=None, tools=None, tool_choice="auto", **kwargs):
+        self.call_count += 1
+        self.call_kwargs.append(kwargs)
+        if self.call_count == 1:
+            raise TypeError("unexpected keyword argument 'timeout'")
+        return self.result
+
+
+class OpenAILikeLLM:
+    def __init__(self, result=None):
+        self.result = result
+        self.call_count = 0
+        self.call_kwargs = []
+
+    def generate_response(self, messages, response_format=None, tools=None, tool_choice="auto", **kwargs):
+        self.call_count += 1
+        self.call_kwargs.append(kwargs)
+        if "max_retries" in kwargs:
+            raise TypeError("Completions.create() got an unexpected keyword argument 'max_retries'")
+        return self.result
+
+
+class FakeClient:
+    def __init__(self, max_retries=2):
+        self.max_retries = max_retries
+
+
+class ClientfulLLM(MockLLM):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.client = FakeClient()
+
+
 def _make(primary, *fallbacks, layer_timeout=40.0):
     return FallbackLLM(primary, list(fallbacks), layer_timeout=layer_timeout)
 
@@ -42,7 +81,7 @@ def test_primary_success_no_fallback_calls():
     assert fb1.call_count == 0
 
 
-def test_injects_timeout_and_max_retries():
+def test_injects_timeout_only():
     primary = MockLLM(result="ok")
     fb1 = MockLLM(result="fb1")
     fallback = _make(primary, fb1)
@@ -50,7 +89,48 @@ def test_injects_timeout_and_max_retries():
     fallback.generate_response([{"role": "user", "content": "hi"}])
 
     assert primary.call_kwargs[0]["timeout"] == 40.0
-    assert primary.call_kwargs[0]["max_retries"] == 0
+    assert "max_retries" not in primary.call_kwargs[0]
+
+
+def test_openai_path_does_not_trigger_type_error():
+    primary = OpenAILikeLLM(result="ok")
+    fallback = _make(primary)
+
+    result = fallback.generate_response([{"role": "user", "content": "hi"}])
+
+    assert result == "ok"
+    assert primary.call_count == 1
+    assert "timeout" in primary.call_kwargs[0]
+
+
+def test_type_error_fallback_calls_without_timeout():
+    primary = TypeErrorThenSuccessLLM(result="ok")
+    fallback = _make(primary)
+
+    result = fallback.generate_response([{"role": "user", "content": "hi"}])
+
+    assert result == "ok"
+    assert primary.call_count == 2
+    assert "timeout" in primary.call_kwargs[0]
+    assert "timeout" not in primary.call_kwargs[1]
+
+
+def test_init_disables_client_retries():
+    primary = ClientfulLLM(result="ok")
+    fb1 = ClientfulLLM(result="fb1")
+    fallback = _make(primary, fb1)
+
+    assert primary.client.max_retries == 0
+    assert fb1.client.max_retries == 0
+
+
+def test_init_skips_llm_without_client():
+    primary = MockLLM(result="ok")
+    fb1 = MockLLM(result="fb1")
+
+    fallback = _make(primary, fb1)
+
+    assert fallback.layer_timeout == 40.0
 
 
 def test_primary_raises_fallback1_used():

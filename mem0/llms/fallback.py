@@ -16,12 +16,19 @@ class FallbackLLM(LLMBase):
     Fast-fail errors (connection errors, HTTP 5xx/401/403) are retried within a
     layer up to ``_MAX_LAYER_RETRIES`` times; timeouts and any other error switch
     to the next layer immediately. Every layer call injects a per-request
-    ``timeout`` and ``max_retries=0`` (ignored by providers that reject them).
+    ``timeout`` (ignored by providers that reject it). SDK-level retries on each
+    sub-LLM are disabled so a timeout surfaces promptly instead of being retried
+    internally by the SDK.
     """
 
     def __init__(self, primary, fallbacks, layer_timeout=40.0):
         self._llms = [primary, *fallbacks]
         self.layer_timeout = layer_timeout
+        for llm in self._llms:
+            try:
+                llm.client.max_retries = 0
+            except AttributeError:
+                pass
 
     def generate_response(self, messages, response_format=None, tools=None, tool_choice="auto", **kwargs):
         last_exc = None
@@ -56,7 +63,7 @@ class FallbackLLM(LLMBase):
 
     def _invoke(self, llm, messages, response_format, tools, tool_choice, kwargs):
         layer_kwargs = dict(kwargs)
-        layer_kwargs.update({"timeout": self.layer_timeout, "max_retries": 0})
+        layer_kwargs.update({"timeout": self.layer_timeout})
         try:
             return llm.generate_response(
                 messages, response_format=response_format, tools=tools, tool_choice=tool_choice, **layer_kwargs
