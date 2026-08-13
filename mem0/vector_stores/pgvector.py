@@ -3,7 +3,9 @@ import logging
 import os
 import re
 from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, List, Optional
+from zoneinfo import ZoneInfo
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from pydantic import BaseModel
@@ -136,6 +138,11 @@ def _with_sslmode(connection_string: str, sslmode: str) -> str:
         return re.sub(r"(^|\s)sslmode=\S+", lambda match: f"{match.group(1)}sslmode={sslmode}", connection_string)
 
     return f"{connection_string} sslmode={sslmode}"
+
+
+_EFFECTIVE_DATE_EXPR = (
+    "COALESCE(NULLIF(payload->>'temporal_date',''), substr(payload->>'created_at',1,10))"
+)
 
 
 class OutputData(BaseModel):
@@ -349,6 +356,7 @@ class PGVector(VectorStoreBase):
                     self._col(),
                 )
             )
+            self.ensure_temporal_index()
 
     def insert(self, vectors: list[list[float]], payloads=None, ids=None) -> None:
         if vectors and self.embedding_model_dims is None:
@@ -427,6 +435,119 @@ class PGVector(VectorStoreBase):
 
             results = cur.fetchall()
         return [OutputData(id=str(r[0]), score=max(0.0, 1.0 - float(r[1])), payload=r[2]) for r in results]
+
+    @staticmethod
+    def _effective_date(payload) -> Optional[date]:
+        """Resolve the memory's effective date (Asia/Shanghai) for temporal filtering.
+
+        temporal_date wins; otherwise created_at is converted to the Shanghai date.
+        Malformed created_at falls back to its first-10-character date portion; None
+        when nothing usable remains (dirty data must never raise here).
+        """
+        if not isinstance(payload, dict):
+            return None
+        temporal = payload.get("temporal_date")
+        if temporal:
+            try:
+                return date.fromisoformat(str(temporal)[:10])
+            except ValueError:
+                pass
+        created = payload.get("created_at")
+        if created:
+            raw = str(created)
+            try:
+                dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(ZoneInfo("Asia/Shanghai")).date()
+            except ValueError:
+                try:
+                    return date.fromisoformat(raw[:10])
+                except ValueError:
+                    return None
+        return None
+
+    def temporal_search(
+        self,
+        filters: Optional[dict] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        top_k: int = 20,
+        half_life_hours: int = 168,
+    ) -> List[OutputData]:
+        """Search memories by absolute time range [start, end] ("YYYY-MM-DD" or None).
+
+        The SQL filter uses a relaxed lower bound (start - 1 day) so the expression
+        index stays usable; results are re-checked in Python against Asia/Shanghai
+        dates, then scored by recency: time_boost = 0.5 ** (age_hours / half_life_hours).
+        """
+        self._ensure_collection()
+        conditions, params = _build_filter_conditions(filters)
+        conditions = list(conditions)
+        params = list(params)
+
+        today_shanghai = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        today_str = today_shanghai.isoformat()
+
+        if start is not None:
+            start_lo = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
+            conditions.append(f"({_EFFECTIVE_DATE_EXPR}) >= %s")
+            params.append(start_lo)
+        if end is not None:
+            conditions.append(f"({_EFFECTIVE_DATE_EXPR}) <= %s")
+            params.append(end)
+        conditions.append("(payload->>'expiration_date' IS NULL OR payload->>'expiration_date' >= %s)")
+        params.append(today_str)
+
+        where_clause = sql.SQL("WHERE " + " AND ".join(conditions))
+
+        with self._get_cursor() as cur:
+            cur.execute(
+                sql.SQL("""
+                SELECT id, payload
+                FROM {}
+                {}
+                ORDER BY {} DESC
+                LIMIT %s
+                """).format(self._col(), where_clause, sql.SQL(_EFFECTIVE_DATE_EXPR)),
+                (*params, max(top_k * 3, 60)),
+            )
+            rows = cur.fetchall()
+
+        start_date = date.fromisoformat(start) if start is not None else None
+        end_date = date.fromisoformat(end) if end is not None else None
+
+        scored = []
+        for row in rows:
+            effective = self._effective_date(row[1])
+            if effective is None:
+                if start_date is not None or end_date is not None:
+                    continue
+                boost = 0.0
+            else:
+                if start_date is not None and effective < start_date:
+                    continue
+                if end_date is not None and effective > end_date:
+                    continue
+                age_days = (today_shanghai - effective).days
+                boost = 0.5 ** (age_days * 24 / half_life_hours)
+            scored.append((boost, row))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [
+            OutputData(id=str(row[0]), score=boost, payload=row[1])
+            for boost, row in scored[:top_k]
+        ]
+
+    def ensure_temporal_index(self) -> None:
+        """Create the expression index backing temporal_search (idempotent)."""
+        with self._get_cursor(commit=True) as cur:
+            cur.execute(
+                sql.SQL("""
+                CREATE INDEX IF NOT EXISTS idx_mem0_temporal_ts ON {}
+                (({}))
+                """).format(self._col(), sql.SQL(_EFFECTIVE_DATE_EXPR))
+            )
 
     def keyword_search(self, query, top_k=5, filters=None):
         """
