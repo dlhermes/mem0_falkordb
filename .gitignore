@@ -155,3 +155,4 @@ cython_debug/
 graphify-out/
 .code-review-graph/
 docs/evolve-observability-plan.md
+docs/temporal-voice-plan.md
