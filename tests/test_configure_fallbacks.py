@@ -27,13 +27,27 @@ if _SERVER_DIR not in sys.path:
     sys.path.insert(0, _SERVER_DIR)
 
 
+def _mock_session():
+    """DB session whose reads return None so bootstrap auth paths behave empty."""
+    session = MagicMock()
+    session.scalar.return_value = None
+    session.query.return_value.first.return_value = None
+    session.__enter__.return_value = session
+    session.__exit__.return_value = False
+    return session
+
+
 @pytest.fixture
 def _mock_memory():
     """Patch Memory.from_config so the server imports without a real backend."""
     mock_instance = MagicMock()
     with patch.dict(os.environ, {"OPENAI_API_KEY": "fake-key"}):
         with patch("mem0.Memory.from_config", return_value=mock_instance):
-            yield mock_instance
+            with patch("server_state._load_overrides", return_value={}):
+                with patch("server_state._save_overrides", return_value=None):
+                    with patch("db.SessionLocal", return_value=_mock_session()):
+                        with patch("auth.SessionLocal", return_value=_mock_session()):
+                            yield mock_instance
 
 
 def _load_app(env_overrides: dict):
