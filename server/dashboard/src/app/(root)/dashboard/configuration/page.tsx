@@ -32,11 +32,15 @@ type BundledProviders = {
 
 const RERANKER_PROVIDERS = ["siliconflow", "llm_reranker"];
 
+const MAX_LLM_FALLBACKS = 2;
+
 type ProviderSnapshot = {
   provider: string;
   model: string;
   baseUrl: string;
 };
+
+type FallbackRow = ProviderSnapshot & { apiKey: string };
 
 type GraphStoreSnapshot = {
   provider: string;
@@ -55,6 +59,7 @@ export default function ConfigurationPage() {
   const [llmModel, setLlmModel] = useState("");
   const [llmApiKey, setLlmApiKey] = useState("");
   const [llmBaseUrl, setLlmBaseUrl] = useState("");
+  const [llmFallbacks, setLlmFallbacks] = useState<FallbackRow[]>([]);
 
   const [embedderProvider, setEmbedderProvider] = useState("");
   const [embedderModel, setEmbedderModel] = useState("");
@@ -93,6 +98,7 @@ export default function ConfigurationPage() {
 
   const initialRef = useRef<{
     llm?: ProviderSnapshot;
+    llmFallbacks: ProviderSnapshot[];
     embedder?: ProviderSnapshot;
     reranker?: ProviderSnapshot;
     graphStore: GraphStoreSnapshot;
@@ -105,6 +111,7 @@ export default function ConfigurationPage() {
     enableLane: false,
     rerankThreshold: null,
     customInstructions: "",
+    llmFallbacks: [],
     graphStore: {
       provider: "",
       config: { host: "", port: "", database: "" },
@@ -144,6 +151,16 @@ export default function ConfigurationPage() {
     setLlmModel((current) => current || config.llm?.config?.model || "");
     setLlmBaseUrl(
       (current) => current || config.llm?.config?.openai_base_url || "",
+    );
+    setLlmFallbacks((current) =>
+      current.length
+        ? current
+        : (config.llm?.fallbacks || []).map((f) => ({
+            provider: f.provider || "",
+            model: f.config?.model || "",
+            apiKey: "",
+            baseUrl: f.config?.openai_base_url || "",
+          })),
     );
     setEmbedderProvider(
       (current) => current || config.embedder?.provider || "",
@@ -228,6 +245,11 @@ export default function ConfigurationPage() {
         model: config.llm?.config?.model || "",
         baseUrl: config.llm?.config?.openai_base_url || "",
       },
+      llmFallbacks: (config.llm?.fallbacks || []).map((f) => ({
+        provider: f.provider || "",
+        model: f.config?.model || "",
+        baseUrl: f.config?.openai_base_url || "",
+      })),
       embedder: {
         provider: config.embedder?.provider || "",
         model: config.embedder?.config?.model || "",
@@ -290,15 +312,15 @@ export default function ConfigurationPage() {
         baseUrl !== (snapshot?.baseUrl || "") ||
         (apiKey && apiKey !== "[redacted]");
 
-      if (
-        hasProviderChanges(
-          llmProvider,
-          llmModel,
-          llmBaseUrl,
-          llmApiKey,
-          base.llm,
-        )
-      ) {
+      const llmChanged = hasProviderChanges(
+        llmProvider,
+        llmModel,
+        llmBaseUrl,
+        llmApiKey,
+        base.llm,
+      );
+
+      if (llmChanged) {
         const llm = buildProviderConfig({
           provider: llmProvider,
           model: llmModel,
@@ -308,6 +330,33 @@ export default function ConfigurationPage() {
         if (llm) {
           newConfig.llm = llm;
         }
+      }
+
+      const effectiveFallbacks = llmFallbacks.filter((f) => f.provider);
+      const llmFallbacksChanged =
+        effectiveFallbacks.length !== base.llmFallbacks.length ||
+        effectiveFallbacks.some((f, i) => {
+          const s = base.llmFallbacks[i];
+          return (
+            f.provider !== s.provider ||
+            f.model !== s.model ||
+            f.baseUrl !== s.baseUrl ||
+            (f.apiKey && f.apiKey !== "[redacted]")
+          );
+        });
+
+      if (llmFallbacksChanged) {
+        newConfig.llm = {
+          ...(newConfig.llm || {}),
+          fallbacks: effectiveFallbacks.map((f) =>
+            buildProviderConfig({
+              provider: f.provider,
+              model: f.model,
+              apiKey: f.apiKey,
+              baseUrl: f.baseUrl,
+            }),
+          ),
+        };
       }
 
       if (
@@ -587,6 +636,141 @@ export default function ConfigurationPage() {
             onBaseUrlChange: setLlmBaseUrl,
             providers: providers?.llm,
           })}
+
+          <div className="space-y-3 border-t border-memBorder-primary pt-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">兜底模型</Label>
+              {llmFallbacks.length >= MAX_LLM_FALLBACKS && (
+                <span className="text-xs text-onSurface-default-tertiary">
+                  最多 {MAX_LLM_FALLBACKS} 个兜底模型
+                </span>
+              )}
+            </div>
+
+            {llmFallbacks.length === 0 && (
+              <p className="text-xs text-onSurface-default-tertiary">
+                未配置兜底模型，主 LLM 不可用时将直接报错
+              </p>
+            )}
+
+            {llmFallbacks.map((fallback, index) => (
+              <div
+                key={index}
+                className="space-y-3 rounded-lg border border-memBorder-primary p-3"
+              >
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">兜底 {index + 1}</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setLlmFallbacks((prev) =>
+                        prev.filter((_, i) => i !== index),
+                      )
+                    }
+                    disabled={!isAdmin}
+                  >
+                    删除
+                  </Button>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">提供商</Label>
+                    <Select
+                      value={fallback.provider}
+                      onValueChange={(value) =>
+                        setLlmFallbacks((prev) =>
+                          prev.map((f, i) =>
+                            i === index
+                              ? { ...f, provider: value, apiKey: "" }
+                              : f,
+                          ),
+                        )
+                      }
+                      disabled={
+                        !isAdmin ||
+                        !providers?.llm ||
+                        providers.llm.length === 0
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="选择提供商" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(providers?.llm || []).map((name) => (
+                          <SelectItem key={name} value={name}>
+                            {name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">模型</Label>
+                    <Input
+                      placeholder="model-name"
+                      value={fallback.model}
+                      onChange={(e) =>
+                        setLlmFallbacks((prev) =>
+                          prev.map((f, i) =>
+                            i === index ? { ...f, model: e.target.value } : f,
+                          ),
+                        )
+                      }
+                      disabled={!isAdmin}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">API 密钥</Label>
+                  <Input
+                    type="password"
+                    placeholder="已配置则留空不修改"
+                    value={fallback.apiKey}
+                    onChange={(e) =>
+                      setLlmFallbacks((prev) =>
+                        prev.map((f, i) =>
+                          i === index ? { ...f, apiKey: e.target.value } : f,
+                        ),
+                      )
+                    }
+                    disabled={!isAdmin}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Base URL</Label>
+                  <Input
+                    placeholder="https://api.example.com/v1"
+                    value={fallback.baseUrl}
+                    onChange={(e) =>
+                      setLlmFallbacks((prev) =>
+                        prev.map((f, i) =>
+                          i === index ? { ...f, baseUrl: e.target.value } : f,
+                        ),
+                      )
+                    }
+                    disabled={!isAdmin}
+                  />
+                </div>
+              </div>
+            ))}
+
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() =>
+                setLlmFallbacks((prev) => [
+                  ...prev,
+                  { provider: "", model: "", apiKey: "", baseUrl: "" },
+                ])
+              }
+              disabled={!isAdmin || llmFallbacks.length >= MAX_LLM_FALLBACKS}
+            >
+              添加兜底
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

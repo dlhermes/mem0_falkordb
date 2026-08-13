@@ -1,5 +1,6 @@
 type ProviderConfig = {
   provider?: string;
+  fallbacks?: ProviderConfig[];
   config?: {
     model?: string;
     api_key?: string;
