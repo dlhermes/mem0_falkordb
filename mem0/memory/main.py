@@ -28,6 +28,7 @@ from mem0.configs.prompts import (
 )
 from mem0.exceptions import LLMError
 from mem0.exceptions import ValidationError as Mem0ValidationError
+from mem0.llms.fallback import FallbackLLM
 from mem0.memory.base import MemoryBase
 from mem0.memory.notices import (
     PERFORMANCE_SLOW_QUERY_THRESHOLD_SECONDS,
@@ -739,6 +740,14 @@ class _AsyncOSSProject:
         raise ValueError(_PROJECT_UPDATE_UNSUPPORTED_ERROR)
 
 
+def _build_llm(llm_config):
+    primary = LlmFactory.create(llm_config.provider, llm_config.config)
+    if not llm_config.fallbacks:
+        return primary
+    fallbacks = [LlmFactory.create(fb.provider, fb.config) for fb in llm_config.fallbacks]
+    return FallbackLLM(primary, fallbacks)
+
+
 class Memory(MemoryBase):
     def __init__(self, config: MemoryConfig = MemoryConfig()):
         self.config = config
@@ -751,7 +760,7 @@ class Memory(MemoryBase):
         self.vector_store = VectorStoreFactory.create(
             self.config.vector_store.provider, self.config.vector_store.config
         )
-        self.llm = LlmFactory.create(self.config.llm.provider, self.config.llm.config)
+        self.llm = _build_llm(self.config.llm)
         self.db = SQLiteManager(self.config.history_db_path)
         self.collection_name = self.config.vector_store.config.collection_name
         self.api_version = self.config.version
@@ -3050,7 +3059,7 @@ class AsyncMemory(MemoryBase):
         self.vector_store = VectorStoreFactory.create(
             self.config.vector_store.provider, self.config.vector_store.config
         )
-        self.llm = LlmFactory.create(self.config.llm.provider, self.config.llm.config)
+        self.llm = _build_llm(self.config.llm)
         self.db = SQLiteManager(self.config.history_db_path)
         self.collection_name = self.config.vector_store.config.collection_name
         self.api_version = self.config.version

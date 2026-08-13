@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 class LlmConfig(BaseModel):
     provider: str = Field(description="Provider of the LLM (e.g., 'ollama', 'openai')", default="openai")
     config: Optional[dict] = Field(description="Configuration for the specific LLM", default={})
+    fallbacks: List["LlmConfig"] = Field(default=[], description="兜底 LLM 配置列表")
 
     @field_validator("config")
     def validate_config(cls, v, values):
@@ -33,3 +34,6 @@ class LlmConfig(BaseModel):
             return v
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
+
+
+LlmConfig.model_rebuild()
