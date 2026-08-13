@@ -352,6 +352,7 @@ const RECALL_STAGES: { key: string; name: string }[] = [
   { key: "threshold", name: "阈值过滤" },
   { key: "decay", name: "时间衰减" },
   { key: "graph", name: "图召回" },
+  { key: "temporal", name: "时间声部" },
   { key: "rerank", name: "重排序" },
   { key: "final", name: "最终" },
 ];

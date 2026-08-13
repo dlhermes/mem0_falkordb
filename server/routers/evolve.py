@@ -313,7 +313,7 @@ def evolve_report(
             "success_rate": rate(ok_count or 0, total),
         }
 
-    stage_order = ["candidates", "threshold", "decay", "graph", "rerank", "final"]
+    stage_order = ["candidates", "threshold", "decay", "graph", "temporal", "rerank", "final"]
     stage_agg: dict[str, list[float]] = {}
     recent: list[dict] = []
     trace_rows = db.execute(

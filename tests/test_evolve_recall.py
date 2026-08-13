@@ -95,6 +95,7 @@ def test_recall_aggregates_stage_averages(client):
                         threshold=(8, 1.2),
                         decay=(8, 0.0),
                         graph=(0, 0.0),
+                        temporal=(0, 0.0),
                         rerank=(5, 3.4),
                         final=(5, 0.5),
                     ),
@@ -110,6 +111,7 @@ def test_recall_aggregates_stage_averages(client):
                         threshold=(6, 2.0),
                         decay=(6, 0.0),
                         graph=(1, 1.0),
+                        temporal=(1, 0.5),
                         rerank=(4, 2.0),
                         final=(4, 1.0),
                     ),
@@ -126,6 +128,7 @@ def test_recall_aggregates_stage_averages(client):
         "threshold",
         "decay",
         "graph",
+        "temporal",
         "rerank",
         "final",
     ]
@@ -137,6 +140,8 @@ def test_recall_aggregates_stage_averages(client):
     assert by_stage["decay"]["avg_count"] == pytest.approx(7)
     assert by_stage["graph"]["avg_count"] == pytest.approx(0.5)
     assert by_stage["graph"]["avg_latency_ms"] == pytest.approx(0.5)
+    assert by_stage["temporal"]["avg_count"] == pytest.approx(0.5)
+    assert by_stage["temporal"]["avg_latency_ms"] == pytest.approx(0.25)
     assert by_stage["rerank"]["avg_count"] == pytest.approx(4.5)
     assert by_stage["final"]["avg_count"] == pytest.approx(4.5)
     assert by_stage["final"]["avg_latency_ms"] == pytest.approx(0.75)
@@ -149,6 +154,7 @@ def test_recall_aggregates_stage_averages(client):
         "threshold",
         "decay",
         "graph",
+        "temporal",
         "rerank",
         "final",
     ]
