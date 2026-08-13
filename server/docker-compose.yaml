@@ -21,7 +21,7 @@ services:
     - ./evolve_cleanup.py:/app/evolve_cleanup.py:ro
     - ./requirements.txt:/app/requirements.txt:ro
     - ../mem0:/app/mem0:ro
-    - ./config.json:/app/config.json:ro
+    - ./config.json:/app/config.json
     - ../pyproject.toml:/app/pyproject.toml:ro
     - /etc/localtime:/etc/localtime:ro
     depends_on:
