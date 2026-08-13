@@ -12,6 +12,7 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  type TooltipProps,
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -409,6 +410,26 @@ function RecallFunnel({ stages }: { stages: RecallStageStat[] }) {
   );
 }
 
+function TrendTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border border-[var(--sentry-hairline)] bg-[var(--sentry-night)]/95 px-3 py-2 shadow-lg">
+      <div className="mb-1.5 text-xs text-[var(--sentry-ink-muted)]">{fmtDay(String(label))}</div>
+      <div className="space-y-1">
+        {payload.map((entry) => (
+          <div key={entry.dataKey as string} className="flex items-center gap-2 text-[13px]">
+            <span className="h-2.5 w-2.5 rounded-[2px]" style={{ background: entry.color }} />
+            <span className="text-[var(--sentry-ink-muted)]">{entry.name}</span>
+            <span className="ml-auto font-medium text-[var(--sentry-ink)]">
+              {fmtCount(Number(entry.value))}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsPage() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
@@ -671,12 +692,7 @@ export default function AnalyticsPage() {
                         stroke="var(--mem-neutral-400)"
                         width={40}
                       />
-                      <Tooltip
-                        labelFormatter={(label) =>
-                          format(new Date(String(label)), "MMM d, yyyy")
-                        }
-                        contentStyle={{ fontSize: 12 }}
-                      />
+                      <Tooltip content={<TrendTooltip />} />
                       <Line
                         type="monotone"
                         dataKey="queries"
