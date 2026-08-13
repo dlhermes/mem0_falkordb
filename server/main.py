@@ -308,16 +308,39 @@ def _redact_config(value: Any, key: str | None = None) -> Any:
 
 def _validate_bundled_providers(config: Dict[str, Any]) -> None:
     llm = config.get("llm")
-    if isinstance(llm, dict) and (provider := llm.get("provider")) and provider not in BUNDLED_LLM_PROVIDERS:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"LLM provider '{provider}' is not bundled in this image. "
-                f"Bundled providers: {', '.join(BUNDLED_LLM_PROVIDERS)}. "
-                "To use another provider, install its Python package, rebuild the container, "
-                "and extend BUNDLED_LLM_PROVIDERS in server/main.py."
-            ),
-        )
+    if isinstance(llm, dict):
+        if (provider := llm.get("provider")) and provider not in BUNDLED_LLM_PROVIDERS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"LLM provider '{provider}' is not bundled in this image. "
+                    f"Bundled providers: {', '.join(BUNDLED_LLM_PROVIDERS)}. "
+                    "To use another provider, install its Python package, rebuild the container, "
+                    "and extend BUNDLED_LLM_PROVIDERS in server/main.py."
+                ),
+            )
+
+        fallbacks = llm.get("fallbacks")
+        if fallbacks is not None and not isinstance(fallbacks, list):
+            raise HTTPException(
+                status_code=400,
+                detail=f"LLM 'fallbacks' must be a list, got {type(fallbacks).__name__}.",
+            )
+        for i, fallback in enumerate(fallbacks or [], start=1):
+            if (
+                isinstance(fallback, dict)
+                and (provider := fallback.get("provider"))
+                and provider not in BUNDLED_LLM_PROVIDERS
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"LLM fallbacks[{i}] provider '{provider}' is not bundled in this image. "
+                        f"Bundled providers: {', '.join(BUNDLED_LLM_PROVIDERS)}. "
+                        "To use another provider, install its Python package, rebuild the container, "
+                        "and extend BUNDLED_LLM_PROVIDERS in server/main.py."
+                    ),
+                )
 
     embedder = config.get("embedder")
     if (
