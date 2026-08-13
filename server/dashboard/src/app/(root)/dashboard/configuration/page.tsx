@@ -518,7 +518,11 @@ export default function ConfigurationPage() {
         await refetch();
       }
 
-      toast({ title: "配置已保存", variant: "success" });
+      toast({
+        title: "配置已保存到 config.json",
+        description: "已热生效，重启容器后持久保留",
+        variant: "success",
+      });
     } catch (error) {
       toast({
         title: "保存配置失败",
