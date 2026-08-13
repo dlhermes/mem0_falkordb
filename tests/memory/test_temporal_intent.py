@@ -279,3 +279,30 @@ class TestTimezone:
             "end": "2026-08-16",
             "strength": "weak",
         }
+
+
+class TestChineseTens:
+    @pytest.mark.parametrize(
+        ("query", "days"),
+        [
+            ("近二十天", 20),
+            ("近二十三天", 23),
+            ("近十五天", 15),
+            ("近十天", 10),
+            ("近三十天", 30),
+            ("近三个月", 90),
+        ],
+    )
+    def test_near(self, query, days):
+        assert temporal_intent.detect_temporal_intent(query) == {
+            "type": "recent",
+            "days": days,
+            "strength": "strong",
+        }
+
+    def test_ago(self):
+        assert temporal_intent.detect_temporal_intent("二十天前") == {
+            "type": "recent",
+            "days": 20,
+            "strength": "strong",
+        }

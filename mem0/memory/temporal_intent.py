@@ -42,6 +42,9 @@ def _now() -> datetime:
 def _to_int(s: str) -> int:
     if s.isdigit():
         return int(s)
+    if "十" in s:
+        tens, _, ones = s.partition("十")
+        return (_CN_NUM.get(tens, 1) if tens else 1) * 10 + (_CN_NUM.get(ones, 0) if ones else 0)
     return sum(_CN_NUM.get(ch, 0) for ch in s)
 
 
