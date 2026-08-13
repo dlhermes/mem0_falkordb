@@ -134,3 +134,78 @@ class TestRedactFallbackSecrets:
         assert resp.status_code == 200
         fb = resp.json()["llm"]["fallbacks"][0]
         assert fb["config"]["api_key"] == "[redacted]"
+
+
+class TestBuildLlmFallbacksFromEnv:
+    """MEM0_LLM_FALLBACK* env vars build llm.fallbacks in DEFAULT_CONFIG."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, _mock_memory):
+        self.server_main = _load_app({"ADMIN_API_KEY": ""})
+        self.build = self.server_main.build_llm_fallbacks_from_env
+
+    def test_env_wired_into_llm_config(self):
+        server_main = _load_app(
+            {"MEM0_LLM_FALLBACK_MODEL": "deepseek-chat", "MEM0_LLM_FALLBACK_API_KEY": "sk-fb"}
+        )
+        llm_config = server_main.DEFAULT_CONFIG["llm"]["config"]
+        assert llm_config["fallbacks"] == [
+            {"provider": "openai", "config": {"model": "deepseek-chat", "api_key": "sk-fb"}}
+        ]
+
+    def test_no_fallback_env_returns_empty(self):
+        assert self.build({}) == []
+        assert self.build({"MEM0_LLM_FALLBACK_API_KEY": "sk-x"}) == []
+        assert self.build({"MEM0_LLM_FALLBACK2_REASONING_EFFORT": "high"}) == []
+
+    def test_fallback1_only(self):
+        assert self.build(
+            {
+                "MEM0_LLM_FALLBACK_MODEL": "deepseek-chat",
+                "MEM0_LLM_FALLBACK_BASE_URL": "https://api.deepseek.com/v1",
+                "MEM0_LLM_FALLBACK_API_KEY": "sk-1",
+            }
+        ) == [
+            {
+                "provider": "openai",
+                "config": {
+                    "model": "deepseek-chat",
+                    "openai_base_url": "https://api.deepseek.com/v1",
+                    "api_key": "sk-1",
+                },
+            }
+        ]
+
+    def test_fallback1_and_2_with_reasoning_effort(self):
+        fb = self.build(
+            {
+                "MEM0_LLM_FALLBACK_MODEL": "deepseek-chat",
+                "MEM0_LLM_FALLBACK2_MODEL": "gpt-4o",
+                "MEM0_LLM_FALLBACK2_BASE_URL": "https://openai.example/v1",
+                "MEM0_LLM_FALLBACK2_REASONING_EFFORT": "high",
+            }
+        )
+        assert len(fb) == 2
+        assert fb[0] == {"provider": "openai", "config": {"model": "deepseek-chat"}}
+        assert fb[1] == {
+            "provider": "openai",
+            "config": {
+                "model": "gpt-4o",
+                "openai_base_url": "https://openai.example/v1",
+                "reasoning_effort": "high",
+            },
+        }
+
+    def test_empty_api_key_not_written(self):
+        fb = self.build(
+            {
+                "MEM0_LLM_FALLBACK_MODEL": "deepseek-chat",
+                "MEM0_LLM_FALLBACK_API_KEY": "",
+                "MEM0_LLM_FALLBACK2_MODEL": "gpt-4o",
+                "MEM0_LLM_FALLBACK2_API_KEY": None,
+            }
+        )
+        assert fb[0]["config"] == {"model": "deepseek-chat"}
+        assert fb[1]["config"] == {"model": "gpt-4o"}
+        assert "api_key" not in fb[0]["config"]
+        assert "api_key" not in fb[1]["config"]

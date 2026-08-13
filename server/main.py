@@ -160,6 +160,34 @@ HISTORY_DB_PATH = os.environ.get("HISTORY_DB_PATH", "/app/history/history.db")
 DEFAULT_LLM_MODEL = os.environ.get("MEM0_DEFAULT_LLM_MODEL", "gpt-4.1-nano-2025-04-14")
 DEFAULT_EMBEDDER_MODEL = os.environ.get("MEM0_DEFAULT_EMBEDDER_MODEL", "text-embedding-3-small")
 
+
+def build_llm_fallbacks_from_env(env: Dict[str, Optional[str]]) -> List[Dict[str, Any]]:
+    """Build llm.fallbacks from env vars. Returns [] when no fallback is configured.
+
+    Fallback 1: MEM0_LLM_FALLBACK_MODEL / MEM0_LLM_FALLBACK_BASE_URL / MEM0_LLM_FALLBACK_API_KEY
+    Fallback 2: MEM0_LLM_FALLBACK2_MODEL / MEM0_LLM_FALLBACK2_BASE_URL / MEM0_LLM_FALLBACK2_API_KEY / MEM0_LLM_FALLBACK2_REASONING_EFFORT
+    Empty api_key is omitted so it never overwrites a stored override with None.
+    """
+    fallbacks: List[Dict[str, Any]] = []
+    for index in (1, 2):
+        prefix = "MEM0_LLM_FALLBACK" if index == 1 else "MEM0_LLM_FALLBACK2"
+        model = env.get(f"{prefix}_MODEL")
+        if not model:
+            continue
+        fallback_config: Dict[str, Any] = {"model": model}
+        base_url = env.get(f"{prefix}_BASE_URL")
+        if base_url:
+            fallback_config["openai_base_url"] = base_url
+        api_key = env.get(f"{prefix}_API_KEY")
+        if api_key:
+            fallback_config["api_key"] = api_key
+        reasoning_effort = env.get(f"{prefix}_REASONING_EFFORT")
+        if reasoning_effort:
+            fallback_config["reasoning_effort"] = reasoning_effort
+        fallbacks.append({"provider": "openai", "config": fallback_config})
+    return fallbacks
+
+
 LLM_CONFIG = {
     "api_key": OPENAI_API_KEY,
     "temperature": float(os.environ.get("MEM0_LLM_TEMPERATURE", "0.2")),
@@ -168,6 +196,9 @@ LLM_CONFIG = {
 }
 if OPENAI_BASE_URL:
     LLM_CONFIG["openai_base_url"] = OPENAI_BASE_URL
+_llm_fallbacks = build_llm_fallbacks_from_env(os.environ)
+if _llm_fallbacks:
+    LLM_CONFIG["fallbacks"] = _llm_fallbacks
 
 EMBEDDER_API_KEY = os.environ.get("EMBEDDER_API_KEY", OPENAI_API_KEY)
 EMBEDDER_CONFIG = {"api_key": EMBEDDER_API_KEY, "model": DEFAULT_EMBEDDER_MODEL}
