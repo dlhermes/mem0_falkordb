@@ -12,6 +12,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
@@ -54,6 +55,7 @@ from mem0.memory.notices import (
 from mem0.memory.setup import mem0_dir, setup_config
 from mem0.memory.storage import SQLiteManager
 from mem0.memory.telemetry import MEM0_TELEMETRY, capture_event
+from mem0.memory.temporal_intent import detect_temporal_intent, effective_date, intent_to_range
 from mem0.memory.utils import (
     _estimate_tokens,
     extract_json,
@@ -637,14 +639,17 @@ def _trace_stages(
     threshold_count=0,
     decay_count=0,
     graph_count=0,
+    temporal_count=0,
     rerank_count=0,
     final_count=0,
     candidate_latency_ms=0.0,
     threshold_latency_ms=0.0,
     decay_latency_ms=0.0,
     graph_latency_ms=0.0,
+    temporal_latency_ms=0.0,
     rerank_latency_ms=0.0,
     final_latency_ms=0.0,
+    temporal_triggered=False,
 ):
     """Build the RECALL funnel trace dict for search().
 
@@ -653,11 +658,13 @@ def _trace_stages(
     """
     return {
         "depth": depth,
+        "temporal_triggered": temporal_triggered,
         "stages": [
             {"stage": "candidates", "count": candidate_count, "latency_ms": round(candidate_latency_ms, 2)},
             {"stage": "threshold", "count": threshold_count, "latency_ms": round(threshold_latency_ms, 2)},
             {"stage": "decay", "count": decay_count, "latency_ms": round(decay_latency_ms, 2)},
             {"stage": "graph", "count": graph_count, "latency_ms": round(graph_latency_ms, 2)},
+            {"stage": "temporal", "count": temporal_count, "latency_ms": round(temporal_latency_ms, 2)},
             {"stage": "rerank", "count": rerank_count, "latency_ms": round(rerank_latency_ms, 2)},
             {"stage": "final", "count": final_count, "latency_ms": round(final_latency_ms, 2)},
         ],
@@ -2068,6 +2075,22 @@ class Memory(MemoryBase):
 
         search_start = time.perf_counter()
         _trace_stats = {} if trace else None
+
+        # Temporal voice: detect time intent (depth=full only) before vector
+        # search so the intent gates the temporal_search merge + fused sort.
+        _temporal_enabled = os.environ.get("MEM0_TEMPORAL_VOICE", "true").lower() == "true"
+        _temporal_window_days = int(os.environ.get("MEM0_TEMPORAL_WINDOW_DAYS", "7"))
+        _temporal_half_life = int(os.environ.get("MEM0_TEMPORAL_HALFLIFE_HOURS", "168"))
+        _temporal_top_k = int(os.environ.get("MEM0_TEMPORAL_TOP_K", "20"))
+        _temporal_intent = (
+            detect_temporal_intent(query, window_days=_temporal_window_days)
+            if (depth == "full" and _temporal_enabled)
+            else None
+        )
+        _temporal_triggered = False
+        _temporal_count = 0
+        _temporal_latency_ms = 0.0
+
         original_memories = self._search_vector_store(
             query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired,
             trace_stats=_trace_stats,
@@ -2131,6 +2154,40 @@ class Memory(MemoryBase):
             _graph_latency_ms = (time.perf_counter() - _graph_t0) * 1000
             graph_count = len(original_memories)
 
+            # Temporal voice: merge time-recalled candidates (source="temporal")
+            # into the pool before rerank, mirroring the graph merge. A failure
+            # degrades to skipping the temporal voice entirely.
+            if _temporal_intent is not None:
+                _temporal_t0 = time.perf_counter()
+                try:
+                    _t_start, _t_end = intent_to_range(_temporal_intent)
+                    _temporal_results = self.vector_store.temporal_search(
+                        filters=effective_filters, start=_t_start, end=_t_end,
+                        top_k=_temporal_top_k, half_life_hours=_temporal_half_life,
+                    )
+                    _existing_ids = {m.get("id") for m in original_memories}
+                    _temporal_memories = []
+                    for _tr in _temporal_results:
+                        _pl = _tr.payload or {}
+                        if not _pl.get("data"):
+                            continue
+                        _mem_id = str(_tr.id)
+                        if _mem_id in _existing_ids:  # 去重：向量已命中则跳过
+                            continue
+                        _temporal_memories.append(
+                            {
+                                "id": _mem_id, "memory": _pl.get("data", ""), "event": "ADD",
+                                "source": "temporal", "recall_channel": "temporal",
+                                "score": _tr.score, "payload": _pl,
+                            }
+                        )
+                    original_memories = list(original_memories) + _temporal_memories
+                    _temporal_triggered = True
+                    _temporal_count = len(_temporal_memories)
+                except Exception as e:
+                    logger.warning(f"Temporal search failed: {e}, skipping temporal voice")
+                _temporal_latency_ms = (time.perf_counter() - _temporal_t0) * 1000
+
             # Apply reranking if enabled and reranker is available
             _rerank_t0 = time.perf_counter()
             _rerank_applied = False
@@ -2162,6 +2219,8 @@ class Memory(MemoryBase):
                             filtered.append(m)
                         elif m.get("source") == "graph" and m.get("recall_channel") == "contains":
                             filtered.append(m)
+                        elif m.get("source") == "temporal":
+                            filtered.append(m)
                     original_memories = filtered
                     logger.info(
                         "Rerank threshold filter: %d → %d (rerank=%.2f, vector_fallback=%.2f)",
@@ -2170,14 +2229,37 @@ class Memory(MemoryBase):
                 # Sort: rerank_score desc, then score desc. Graph fragments
                 # carry rerank_score after rerank so they interleave naturally;
                 # ties broken by keeping contains-channel fragments ahead.
-                original_memories.sort(
-                    key=lambda m: (
-                        m.get("rerank_score", 0),
-                        m.get("score", 0) if m.get("score") is not None else -1,
-                        1 if m.get("source") == "graph" and m.get("recall_channel") == "contains" else 0,
-                    ),
-                    reverse=True,
-                )
+                # When the temporal voice fired, sort by the fused score
+                # (recency-decayed time_boost blended with rerank_score) instead;
+                # otherwise the existing sort is untouched.
+                if _temporal_triggered:
+                    _w_t = 0.7 if _temporal_intent.get("strength") == "strong" else 0.4
+                    _today_sh = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+
+                    def _fuse_key(m):
+                        _eff = effective_date(m.get("payload"))
+                        if _eff is not None:
+                            _tb = 0.5 ** ((_today_sh - _eff).days * 24 / _temporal_half_life)
+                            _final = _w_t * _tb + (1 - _w_t) * m.get("rerank_score", 0)
+                        else:
+                            _final = m.get("rerank_score", 0)
+                        return (
+                            _final,
+                            m.get("rerank_score", 0),
+                            m.get("score", 0) if m.get("score") is not None else -1,
+                            1 if m.get("source") == "graph" and m.get("recall_channel") == "contains" else 0,
+                        )
+
+                    original_memories.sort(key=_fuse_key, reverse=True)
+                else:
+                    original_memories.sort(
+                        key=lambda m: (
+                            m.get("rerank_score", 0),
+                            m.get("score", 0) if m.get("score") is not None else -1,
+                            1 if m.get("source") == "graph" and m.get("recall_channel") == "contains" else 0,
+                        ),
+                        reverse=True,
+                    )
             _rerank_latency_ms = (time.perf_counter() - _rerank_t0) * 1000
             rerank_count = len(original_memories)
 
@@ -2205,14 +2287,17 @@ class Memory(MemoryBase):
                 threshold_count=_trace_stats.get("after_threshold", 0),
                 decay_count=_trace_stats.get("after_decay", 0),
                 graph_count=graph_count,
+                temporal_count=_temporal_count,
                 rerank_count=rerank_count,
                 final_count=len(original_memories),
                 candidate_latency_ms=_trace_stats.get("candidates_latency_ms", 0.0),
                 threshold_latency_ms=_trace_stats.get("threshold_latency_ms", 0.0),
                 decay_latency_ms=_trace_stats.get("decay_latency_ms", 0.0),
                 graph_latency_ms=_graph_latency_ms,
+                temporal_latency_ms=_temporal_latency_ms,
                 rerank_latency_ms=_rerank_latency_ms,
                 final_latency_ms=search_elapsed_seconds * 1000,
+                temporal_triggered=_temporal_triggered,
             )
         if depth == "standard" and _std_ttl > 0:
             self._search_depth_cache[_cache_key] = (time.perf_counter(), _results)
@@ -4245,6 +4330,22 @@ class AsyncMemory(MemoryBase):
 
         search_start = time.perf_counter()
         _trace_stats = {} if trace else None
+
+        # Temporal voice: detect time intent (depth=full only) before vector
+        # search so the intent gates the temporal_search merge + fused sort.
+        _temporal_enabled = os.environ.get("MEM0_TEMPORAL_VOICE", "true").lower() == "true"
+        _temporal_window_days = int(os.environ.get("MEM0_TEMPORAL_WINDOW_DAYS", "7"))
+        _temporal_half_life = int(os.environ.get("MEM0_TEMPORAL_HALFLIFE_HOURS", "168"))
+        _temporal_top_k = int(os.environ.get("MEM0_TEMPORAL_TOP_K", "20"))
+        _temporal_intent = (
+            detect_temporal_intent(query, window_days=_temporal_window_days)
+            if (depth == "full" and _temporal_enabled)
+            else None
+        )
+        _temporal_triggered = False
+        _temporal_count = 0
+        _temporal_latency_ms = 0.0
+
         original_memories = await self._search_vector_store(
             query, effective_filters, limit, threshold, explain=explain, show_expired=show_expired,
             trace_stats=_trace_stats,
@@ -4317,6 +4418,44 @@ class AsyncMemory(MemoryBase):
             _graph_latency_ms = (time.perf_counter() - _graph_t0) * 1000
             graph_count = len(original_memories)
 
+            # Temporal voice: merge time-recalled candidates (source="temporal")
+            # into the pool before rerank, mirroring the graph merge. A failure
+            # degrades to skipping the temporal voice entirely.
+            if _temporal_intent is not None:
+                _temporal_t0 = time.perf_counter()
+                try:
+                    _t_start, _t_end = intent_to_range(_temporal_intent)
+                    _temporal_results = await asyncio.to_thread(
+                        self.vector_store.temporal_search,
+                        filters=effective_filters,
+                        start=_t_start,
+                        end=_t_end,
+                        top_k=_temporal_top_k,
+                        half_life_hours=_temporal_half_life,
+                    )
+                    _existing_ids = {m.get("id") for m in original_memories}
+                    _temporal_memories = []
+                    for _tr in _temporal_results:
+                        _pl = _tr.payload or {}
+                        if not _pl.get("data"):
+                            continue
+                        _mem_id = str(_tr.id)
+                        if _mem_id in _existing_ids:  # 去重：向量已命中则跳过
+                            continue
+                        _temporal_memories.append(
+                            {
+                                "id": _mem_id, "memory": _pl.get("data", ""), "event": "ADD",
+                                "source": "temporal", "recall_channel": "temporal",
+                                "score": _tr.score, "payload": _pl,
+                            }
+                        )
+                    original_memories = list(original_memories) + _temporal_memories
+                    _temporal_triggered = True
+                    _temporal_count = len(_temporal_memories)
+                except Exception as e:
+                    logger.warning(f"Temporal search failed: {e}, skipping temporal voice")
+                _temporal_latency_ms = (time.perf_counter() - _temporal_t0) * 1000
+
             # Apply reranking if enabled and reranker is available (async)
             _rerank_t0 = time.perf_counter()
             _rerank_applied = False
@@ -4350,6 +4489,8 @@ class AsyncMemory(MemoryBase):
                             filtered.append(m)
                         elif m.get("source") == "graph" and m.get("recall_channel") == "contains":
                             filtered.append(m)
+                        elif m.get("source") == "temporal":
+                            filtered.append(m)
                     original_memories = filtered
                     logger.info(
                         "Rerank threshold filter: %d → %d (rerank=%.2f, vector_fallback=%.2f)",
@@ -4358,14 +4499,37 @@ class AsyncMemory(MemoryBase):
                 # Sort: rerank_score desc, then score desc. Graph fragments
                 # carry rerank_score after rerank so they interleave naturally;
                 # ties broken by keeping contains-channel fragments ahead.
-                original_memories.sort(
-                    key=lambda m: (
-                        m.get("rerank_score", 0),
-                        m.get("score", 0) if m.get("score") is not None else -1,
-                        1 if m.get("source") == "graph" and m.get("recall_channel") == "contains" else 0,
-                    ),
-                    reverse=True,
-                )
+                # When the temporal voice fired, sort by the fused score
+                # (recency-decayed time_boost blended with rerank_score) instead;
+                # otherwise the existing sort is untouched.
+                if _temporal_triggered:
+                    _w_t = 0.7 if _temporal_intent.get("strength") == "strong" else 0.4
+                    _today_sh = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+
+                    def _fuse_key(m):
+                        _eff = effective_date(m.get("payload"))
+                        if _eff is not None:
+                            _tb = 0.5 ** ((_today_sh - _eff).days * 24 / _temporal_half_life)
+                            _final = _w_t * _tb + (1 - _w_t) * m.get("rerank_score", 0)
+                        else:
+                            _final = m.get("rerank_score", 0)
+                        return (
+                            _final,
+                            m.get("rerank_score", 0),
+                            m.get("score", 0) if m.get("score") is not None else -1,
+                            1 if m.get("source") == "graph" and m.get("recall_channel") == "contains" else 0,
+                        )
+
+                    original_memories.sort(key=_fuse_key, reverse=True)
+                else:
+                    original_memories.sort(
+                        key=lambda m: (
+                            m.get("rerank_score", 0),
+                            m.get("score", 0) if m.get("score") is not None else -1,
+                            1 if m.get("source") == "graph" and m.get("recall_channel") == "contains" else 0,
+                        ),
+                        reverse=True,
+                    )
             _rerank_latency_ms = (time.perf_counter() - _rerank_t0) * 1000
             rerank_count = len(original_memories)
 
@@ -4393,14 +4557,17 @@ class AsyncMemory(MemoryBase):
                 threshold_count=_trace_stats.get("after_threshold", 0),
                 decay_count=_trace_stats.get("after_decay", 0),
                 graph_count=graph_count,
+                temporal_count=_temporal_count,
                 rerank_count=rerank_count,
                 final_count=len(original_memories),
                 candidate_latency_ms=_trace_stats.get("candidates_latency_ms", 0.0),
                 threshold_latency_ms=_trace_stats.get("threshold_latency_ms", 0.0),
                 decay_latency_ms=_trace_stats.get("decay_latency_ms", 0.0),
                 graph_latency_ms=_graph_latency_ms,
+                temporal_latency_ms=_temporal_latency_ms,
                 rerank_latency_ms=_rerank_latency_ms,
                 final_latency_ms=search_elapsed_seconds * 1000,
+                temporal_triggered=_temporal_triggered,
             )
         if depth == "standard" and _std_ttl > 0:
             self._search_depth_cache[_cache_key] = (time.perf_counter(), _results)

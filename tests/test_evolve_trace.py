@@ -120,7 +120,7 @@ class TestSearchTrace:
         assert trace["depth"] == "standard"
 
         stages = {s["stage"]: s for s in trace["stages"]}
-        assert set(stages.keys()) == {"candidates", "threshold", "decay", "graph", "rerank", "final"}
+        assert set(stages.keys()) == {"candidates", "threshold", "decay", "graph", "temporal", "rerank", "final"}
         for stage in trace["stages"]:
             assert set(stage.keys()) == {"stage", "count", "latency_ms"}
             assert stage["latency_ms"] >= 0
@@ -129,6 +129,7 @@ class TestSearchTrace:
         assert stages["threshold"]["count"] == 2
         assert stages["decay"]["count"] == 2
         assert stages["graph"]["count"] == 2
+        assert stages["temporal"]["count"] == 0
         assert stages["rerank"]["count"] == 2
         assert stages["final"]["count"] == 2
 
@@ -138,11 +139,13 @@ class TestSearchTrace:
             "results": [],
             "trace": {
                 "depth": "minimal",
+                "temporal_triggered": False,
                 "stages": [
                     {"stage": "candidates", "count": 0, "latency_ms": 0.0},
                     {"stage": "threshold", "count": 0, "latency_ms": 0.0},
                     {"stage": "decay", "count": 0, "latency_ms": 0.0},
                     {"stage": "graph", "count": 0, "latency_ms": 0.0},
+                    {"stage": "temporal", "count": 0, "latency_ms": 0.0},
                     {"stage": "rerank", "count": 0, "latency_ms": 0.0},
                     {"stage": "final", "count": 0, "latency_ms": 0.0},
                 ],

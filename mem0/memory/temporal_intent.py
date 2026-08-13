@@ -1,6 +1,6 @@
 import re
-from datetime import date, datetime, timedelta
-from typing import Optional
+from datetime import date, datetime, timedelta, timezone
+from typing import Optional, Tuple
 from zoneinfo import ZoneInfo
 
 _CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
@@ -69,6 +69,59 @@ def _resolve(token: str, today: date, yesterday: date) -> str:
     if token == "yesterday":
         return _fmt(yesterday)
     return token
+
+
+def intent_to_range(intent: Optional[dict], today: Optional[date] = None) -> Tuple[Optional[str], Optional[str]]:
+    """Normalize a temporal intent to an absolute ["YYYY-MM-DD"|None, ...] range.
+
+    recent -> [today - days, today]; date -> [date, date]; range -> as-is
+    (possibly single-sided). Returns (None, None) for anything else.
+    """
+    if not isinstance(intent, dict):
+        return None, None
+    t = today or _now().date()
+    kind = intent.get("type")
+    if kind == "recent":
+        days = intent.get("days") or 0
+        return _fmt(t - timedelta(days=days)), _fmt(t)
+    if kind == "date":
+        d = intent.get("date")
+        return d, d
+    if kind == "range":
+        return intent.get("start"), intent.get("end")
+    return None, None
+
+
+def effective_date(payload) -> Optional[date]:
+    """Resolve the memory's effective date (Asia/Shanghai) for temporal scoring.
+
+    Mirrors PGVector._effective_date: temporal_date wins; otherwise created_at
+    is converted to the Shanghai date. Malformed created_at falls back to its
+    first-10-character date portion; None when nothing usable remains (dirty
+    data must never raise here).
+    """
+    if not isinstance(payload, dict):
+        return None
+    temporal = payload.get("temporal_date")
+    if temporal:
+        try:
+            return date.fromisoformat(str(temporal)[:10])
+        except ValueError:
+            pass
+    created = payload.get("created_at")
+    if created:
+        raw = str(created)
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        except ValueError:
+            try:
+                return date.fromisoformat(raw[:10])
+            except ValueError:
+                return None
+    return None
 
 
 def detect_temporal_intent(query: str, window_days: int = 7) -> Optional[dict]:
