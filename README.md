@@ -212,7 +212,7 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 
 | 块 | 说明 |
 |----|------|
-| `llm` | 事实提取大模型（OpenAI 兼容任意服务） |
+| `llm` | 事实提取大模型（OpenAI 兼容任意服务），支持 `fallbacks` 多层兜底 |
 | `embedder` | 向量模型（OpenAI / VoyageAI / 本地 bge 等） |
 | `reranker` | 可选，配置后搜索自动重排序 |
 | `graph_store` | `provider: "falkordb"`，见 [docs/falkordb-integration.md](docs/falkordb-integration.md) |
@@ -221,6 +221,19 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 
 ```json
 "reasoning_effort": "none"
+```
+
+**多层兜底**：`llm.fallbacks` 按顺序提供兜底模型（最多 2 个），主模型异常/超时（40s）自动切换下一层；快速失败（连接/5xx/401）层内重试 3 次，超时直接切层。示例：
+
+```json
+"llm": {
+  "provider": "openai",
+  "config": { "model": "主模型", "openai_base_url": "...", "api_key": "..." },
+  "fallbacks": [
+    { "provider": "openai", "config": { "model": "兜底1", "openai_base_url": "...", "api_key": "..." } },
+    { "provider": "openai", "config": { "model": "兜底2", "openai_base_url": "...", "api_key": "...", "reasoning_effort": "none" } }
+  ]
+}
 ```
 
 ### .env（基础设施）
