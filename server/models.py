@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
@@ -127,5 +127,6 @@ class EvolveQuery(Base):
     avg_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     latency_ms: Mapped[float] = mapped_column(Float, default=0)
     is_zero_hit: Mapped[bool] = mapped_column(default=False)
+    temporal_triggered: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     trace: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)

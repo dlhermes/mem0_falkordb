@@ -675,6 +675,7 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
     finally:
         query_log["latency_ms"] = round((time.perf_counter() - start) * 1000, 2)
         query_log["trace"] = trace_dict
+        query_log["temporal_triggered"] = bool(trace_dict and trace_dict.get("temporal_triggered"))
         if isinstance(trace_dict, dict) and trace_dict.get("depth"):
             query_log["depth"] = trace_dict["depth"]
         _submit_evolve_query(query_log)
