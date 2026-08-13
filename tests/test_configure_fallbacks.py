@@ -154,10 +154,12 @@ class TestBuildLlmFallbacksFromEnv:
         server_main = _load_app(
             {"MEM0_LLM_FALLBACK_MODEL": "deepseek-chat", "MEM0_LLM_FALLBACK_API_KEY": "sk-fb"}
         )
-        llm_config = server_main.DEFAULT_CONFIG["llm"]["config"]
+        llm_config = server_main.DEFAULT_CONFIG["llm"]
         assert llm_config["fallbacks"] == [
             {"provider": "openai", "config": {"model": "deepseek-chat", "api_key": "sk-fb"}}
         ]
+        # fallbacks 必须在 llm 层，不能污染 llm.config（否则 OpenAIConfig(**config) 抛 TypeError）
+        assert "fallbacks" not in server_main.DEFAULT_CONFIG["llm"]["config"]
 
     def test_no_fallback_env_returns_empty(self):
         assert self.build({}) == []

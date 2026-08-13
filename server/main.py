@@ -197,8 +197,6 @@ LLM_CONFIG = {
 if OPENAI_BASE_URL:
     LLM_CONFIG["openai_base_url"] = OPENAI_BASE_URL
 _llm_fallbacks = build_llm_fallbacks_from_env(os.environ)
-if _llm_fallbacks:
-    LLM_CONFIG["fallbacks"] = _llm_fallbacks
 
 EMBEDDER_API_KEY = os.environ.get("EMBEDDER_API_KEY", OPENAI_API_KEY)
 EMBEDDER_CONFIG = {"api_key": EMBEDDER_API_KEY, "model": DEFAULT_EMBEDDER_MODEL}
@@ -222,7 +220,7 @@ DEFAULT_CONFIG = {
             "embedding_model_dims": int(_embedding_dims) if _embedding_dims is not None else None,
         },
     },
-    "llm": {"provider": "openai", "config": LLM_CONFIG},
+    "llm": {"provider": "openai", "config": LLM_CONFIG, "fallbacks": _llm_fallbacks},
     "embedder": {"provider": "openai", "config": EMBEDDER_CONFIG},
     "history_db_path": HISTORY_DB_PATH,
     "graph_store": {
