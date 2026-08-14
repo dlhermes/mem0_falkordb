@@ -2,17 +2,16 @@
 
 > 本 Fork 已将 FalkorDB 直接编译进 `GraphStoreFactory`，配置 `graph_store.provider="falkordb"` 即可使用，无需额外插件或 monkey-patch。
 
----
+本文档说明图存储的接入方式、数据模型、检索机制与注意事项，配套根目录 [README.md](../README.md) 的「图存储与检索」章节阅读。
 
 ## 目录
 
 - [为什么用图存储](#为什么用图存储)
 - [架构](#架构)
-- [配置](#配置)
+- [快速接入](#快速接入)
 - [验证](#验证)
-- [每用户图隔离](#每用户图隔离)
+- [数据模型](#数据模型)
 - [图记忆时效](#图记忆时效)
-- [图数据生命周期](#图数据生命周期)
 - [参数](#参数)
 - [注意事项](#注意事项)
 
@@ -41,7 +40,7 @@
 │  mem0/graphs/falkordb/MemoryGraph                            │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │ · _retrieve_nodes_from_data        → LLM 实体提取       │  │
-│  │ · _establish_nodes_relations       → LLM 关系提取       │  │
+│  │ · _establish_nodes_relations_from_data → LLM 关系提取  │  │
 │  │ · _search_graph_db                 → BM25 重排图召回    │  │
 │  │ · _add_entities                    → Cypher MERGE 写入  │  │
 │  │ · _invalidate_entities             → 冲突失效标记       │  │
@@ -56,7 +55,7 @@
 
 ---
 
-## 配置
+## 快速接入
 
 ### Server 部署
 
@@ -123,7 +122,9 @@ results = m.search("发哥部署在哪里", user_id="alice", depth="full")
 
 ---
 
-## 每用户图隔离
+## 数据模型
+
+### 每用户图隔离
 
 每个 `user_id` 对应一个独立图，命名规则 `mem0_{user_id}`：
 
@@ -133,6 +134,23 @@ results = m.search("发哥部署在哪里", user_id="alice", depth="full")
 | `bob`   | `mem0_bob` |
 
 用户之间的图数据完全隔离，互不干扰。
+
+### 图数据生命周期
+
+**写入链路（add()）**：
+
+1. `_retrieve_nodes_from_data()`  → LLM 实体提取
+2. `_establish_nodes_relations_from_data()` → LLM 关系提取
+3. `_search_graph_db()`           → BM25 重排已有关系
+4. `_add_entities()`              → Cypher MERGE 写入
+
+**搜索链路（search()，full 深度）**：
+
+1. 从查询提取实体
+2. `_search_graph_db()` 查询实体关联
+3. BM25 重排后合并进搜索结果
+
+`delete_all()`：自动清理对应图数据（整图删除）。`delete()` 单条删除**不清图**——图按用户共享，逐条删除会破坏图结构（代码明确跳过：`graph cleanup skipped (shared knowledge graph)`）。
 
 ---
 
@@ -146,28 +164,9 @@ results = m.search("发哥部署在哪里", user_id="alice", depth="full")
 | 检索 | 默认只返回有效关系（`invalidated_at IS NULL`） |
 | 同事实重现 | 自动复活（MERGE 命中失效边时重置标记） |
 | 存量数据 | 无标记视为有效，向后兼容 |
-| LLM 成本 | 零额外调用（失效时间取冲突发生时戳） |
+| LLM 成本 | 失效时间戳由 Cypher 生成，写入零 LLM 成本（冲突判定复用既有 LLM 消解链路） |
 
 **价值**：① 被推翻的事实不再污染图上下文；② LLM 判断错了只是「误失效」，可追溯、可恢复，而非永久丢失。
-
----
-
-## 图数据生命周期
-
-```
-add() 调用链：
-1. _retrieve_nodes_from_data()        LLM 提取实体
-2. _establish_nodes_relations()       LLM 提取关系
-3. _search_graph_db()                 BM25 重排已有关系
-4. _add_entities()                    Cypher MERGE 写入
-
-search() 调用链（full 深度）：
-1. 从查询提取实体
-2. _search_graph_db() 查询实体关联
-3. BM25 重排后合并进搜索结果
-
-delete() / delete_all()：自动清理对应图数据
-```
 
 ---
 

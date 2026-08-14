@@ -7,11 +7,14 @@
 ## 目录
 
 - [项目定位](#项目定位)
-- [核心能力全景](#核心能力全景)
 - [架构](#架构)
 - [快速开始](#快速开始)
-- [配置](#配置)
 - [功能详解](#功能详解)
+  - [图存储与检索](#图存储与检索)
+  - [记忆质量](#记忆质量)
+  - [可观测与进化](#可观测与进化)
+- [管理后台（Dashboard）](#管理后台dashboard)
+- [配置](#配置)
 - [运维](#运维)
 - [环境要求](#环境要求)
 - [许可证](#许可证)
@@ -28,44 +31,9 @@ mem0 是一个为 AI Agent 提供持久记忆的开源库（存/搜/删 + LLM �
 | **生产级能力** | 记忆衰减、过期清理、语义去重、矛盾检测、时间推理、深度路由、rerank、中文全链路 |
 | **可观测与进化** | 搜索质量观测、记忆热度体系、反馈闭环、进化循环、统计面板、召回漏斗 trace |
 
----
+部署与兼容方面的额外亮点：
 
-## 核心能力全景
-
-### 图存储与检索
-
-| 能力 | 说明 |
-|------|------|
-| FalkorDB 图后端 | 内置集成，配置即用；实体节点 + 关系边 + 引用计数 + 每用户独立图 |
-| 图记忆时效 | 冲突消解改为**失效保留**（`invalidated_at` 标记），检索默认只出有效事实，同事实重现自动复活，误判可恢复 |
-| 搜索增强 | 向量 + BM25 + 图关系合并，full 深度返回图召回片段 |
-| 三级深度路由 | minimal（跳过检索）/ standard（向量+BM25）/ full（含图+rerank），自动识别废话降本 40-60% |
-
-### 记忆质量
-
-| 能力 | 开关 | 说明 |
-|------|------|------|
-| 记忆衰减 | `MEM0_ENABLE_DECAY=true` | 指数衰减 + Lane 分轨（importance=5 永不衰减 / slow / normal / fast 三速） |
-| 语义去重 | cron 每日 | 三层判定（向量粗筛 → 字符相似 → LLM 二元确认），合并近重复记忆，不压缩内容 |
-| 矛盾检测 | `MEM0_ENABLE_CONTRADICTION=true` | 写入时实时判定，自动清理冲突旧记忆 |
-| 时间推理 | 默认开启 | 每条记忆自动标注 PAST/PRESENT/FUTURE/TIMELESS，可过滤 |
-| 时间声部检索 | 默认开启 | 查询带时间意图（最近/昨天/上周…）时按时间召回记忆并入候选池，融合排序让近期记忆系统性靠前（`MEM0_TEMPORAL_*` 可配） |
-| 记忆热度 | 默认开启 | access_count / last_access 随搜索更新，热度参与排序（权重可配） |
-| 显式反馈闭环 | 默认开启 | useful/useless/correction 三档反馈直接调整记忆热度分，可审计可逆 |
-
-### 可观测与进化
-
-| 能力 | 说明 |
-|------|------|
-| 搜索质量观测 | 每次搜索落日志：查询词/召回数/平均分/耗时/是否零命中 |
-| 进化循环 | cron 每日：高频记忆自动提权 + 零命中统计 + 长期未召回清单 |
-| Analytics 面板 | Dashboard 五个真实数据面板（中文）：搜索质量/反馈闭环/热度健康/操作概览/召回漏斗 |
-| RECALL 召回漏斗 | 搜索链路七阶段（候选池→阈值→衰减→图→时间声部→rerank→最终）命中数与耗时可视化 |
-| 清理/保留决策 | 面板上直接对未召回记忆点「清理」或「保留」，不用看文档 |
-
-### 部署与兼容
-
-| 能力 | 说明 |
+| 亮点 | 说明 |
 |------|------|
 | 配置文件驱动 | `MEM0_CONFIG_PATH` 指向 config.json，纯配置部署，无需调 API |
 | 自动管理员 | 容器启动自动创建 `admin@mem0.dev` + 随机密码，日志可见 |
@@ -206,6 +174,175 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 
 ---
 
+## 功能详解
+
+### 图存储与检索
+
+#### 图存储（FalkorDB）
+
+- 图存储接口层完整恢复，FalkorDB 直接编译进 `GraphStoreFactory`，配置即用，无需补丁
+- 每用户独立图（`mem0_{user_id}`），实体节点 + 关系边 + 引用计数
+- 中文关系名（`部署于`、`偏好`）经 backtick 转义直接写入，无需英文映射
+- 详见 → **[docs/falkordb-integration.md](docs/falkordb-integration.md)**
+
+**图数据预览**（每用户独立图，实体节点 + 关系边 + 引用计数）：
+
+![图数据预览](docs/screenshots/graph%20data-preview-1.png)
+
+#### 图记忆时效（Temporal Validity）
+
+冲突消解从「物理删除」改为「失效保留」：
+
+- 旧关系不再删除，写入 `invalidated_at` 标记失效
+- 检索默认只返回有效事实（`invalidated_at IS NULL`）
+- 同事实再次出现自动复活（重置失效标记）
+- 存量关系无标记视为有效，向后兼容；失效时间戳由 Cypher 生成，写入零 LLM 成本（冲突判定复用既有 LLM 消解链路）
+
+**价值**：LLM 误判冲突只是「误失效」——可追溯、可恢复，而非永久丢失。
+
+#### 搜索深度路由
+
+| 深度 | 链路 | 降本 |
+|------|------|------|
+| `minimal` | 跳过全部检索（命中废话白名单） | 100% |
+| `standard` | embedding + BM25（跳过图 + rerank） | ~70% |
+| `full` | embedding + BM25 + 图 + rerank（默认） | 0% |
+
+深度自动判定在 `Memory.search()` 入口执行；词表存 SQLite `search_keywords` 表（路径 `/app/history/history.db`），增删词即生效，无需重启。每次搜索实际走的深度记录在 `evolve_queries.depth`，可在 Analytics「召回漏斗」观测。
+
+**时间意图自动升档**：查询带时间意图（如"最近部署了什么"）时，即使被路由到 `minimal`/`standard` 档也会强制按 `full` 执行（时间声部与 rerank 依赖 full 链路），保证"最近发生了什么"类查询拿到时间加权结果。可用 `MEM0_TEMPORAL_FORCE_FULL=false` 关闭。
+
+#### 时间声部检索
+
+解决"最近部署了什么""昨天说过什么"这类查询——语义检索对时间维度是盲的，新旧记忆混在一起。时间声部让"时间"成为一路独立检索信号：
+
+- **时间意图检测**：查询含中英文时间词（最近/近 N 天/N 小时前/昨天/上周/今年… 或 ISO 日期）时识别出时间窗口；强信号（最近/最新，w=0.7）与弱信号（昨天/本周，w=0.4）分档；"今天天气怎么样"类语义查询（天气/新闻/汇率/股票/日程/待办）被排除表拦下，不触发
+- **时间召回**：按时间窗口从 pgvector 倒序召回（内容发生时间 `temporal_date` 优先、记录时间 `created_at` 回退，全链路 Asia/Shanghai 时区），过期/失效记忆过滤，表达式索引加速
+- **融合排序**：时间候选与向量/图候选一起过 rerank 并豁免阈值；时间意图下全部候选按 `w × 时间衰减分 + (1−w) × rerank 分` 融合排序——近期记忆系统性靠前，普通查询零变化
+- **观测**：trace 新增 temporal 阶段与 `temporal_triggered` 标记，落 `evolve_queries` 表可在 Analytics「召回漏斗」查看触发情况
+- 开关与参数：`MEM0_TEMPORAL_VOICE` / `MEM0_TEMPORAL_WINDOW_DAYS` / `MEM0_TEMPORAL_HALFLIFE_HOURS` / `MEM0_TEMPORAL_TOP_K` / `MEM0_TEMPORAL_FORCE_FULL`
+
+### 记忆质量
+
+#### 记忆衰减
+
+```
+score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
+```
+
+| 档位 | 半衰期 | 触发 |
+|------|--------|------|
+| 永不衰减 | ∞ | LLM 判 importance=5 |
+| 慢衰减 | ~100 天 | lane=slow / 关键词含「踩坑/报错/步骤/流程/配置」 |
+| 正常衰减 | ~30 天 | 兜底 |
+| 快衰减 | ~20 天 | lane=fast / 关键词含「开心/心情/今天/临时」 |
+
+#### 记忆热度体系
+
+- 每条记忆随搜索更新 `access_count` / `last_access_at`
+- 热度分参与排序：在向量/BM25/实体综合分（归一化）基础上叠加热度乘数 `(1 + 权重 × heat_effective)`
+  - `heat_effective = min(access_count/100, 1) + (salience_score − 1)`
+  - 权重由 `MEM0_EVOLVE_RANK_WEIGHT` 控制，默认 0 时不改变现有排序
+- 时间衰减管「时间」，热度管「使用频率」，互不叠加
+
+#### 显式反馈闭环
+
+对话层捕获用户纠正信号（或人工在接口/面板标记），通过 `POST /evolve/feedback` 调整记忆热度分：
+
+| 反馈 | 热度变化 |
+|------|---------|
+| useful（有用） | +0.1 |
+| useless（无用） | −0.15 |
+| correction（内容错误） | −0.05 |
+
+只改热度分、不改记忆内容；每条反馈落审计表（evolve_feedback / evolve_salience_adjustments），可追溯、误报可逆。
+
+#### 语义去重
+
+三层判定合并近重复记忆：
+
+1. 向量粗筛：cosine 相似度 > 阈值（无 LLM）
+2. 字符 Jaccard 预筛：明显不同措辞直接跳过（无 LLM）
+3. LLM 二元判定：剩余候选对「同事实？YES/NO」
+
+只合并近重复、不压缩内容，安全性优先。cron 每日 05:00 执行。
+
+#### 矛盾检测
+
+开启后 LLM 在每次写入时自动对比新消息与已有记忆，发现矛盾自动清理旧记忆，写入即检测。开关：`MEM0_ENABLE_CONTRADICTION=true`。
+
+#### 时间推理
+
+每条记忆自动标注 `temporal`（PAST/PRESENT/FUTURE/TIMELESS），搜索可用 `filters: {"temporal": "FUTURE"}` 过滤；零额外 LLM 调用。
+
+### 可观测与进化
+
+每次搜索自动落观测日志（查询词/召回数/平均分/耗时/是否零命中，数据存 `evolve_queries` 表），支撑下方进化循环与面板展示。
+
+#### 进化循环（cron 每日 06:00）
+
+- **高频提权**：access_count ≥ 5 的记忆自动加分（`+min(0.05, (acc−4)×0.01)`，上限 1.5），当日幂等
+- **零命中统计**：24h 内零命中查询聚合清单
+- **未召回清单**：14 天未被召回的观察清单（只提示不自动降权，由人决策）
+
+#### RECALL 召回漏斗
+
+搜索链路每个阶段采集命中数与耗时：候选池 → 阈值过滤 → 时间衰减 → 图召回 → **时间声部** → 重排序 → 最终。用于定位「搜不到」的病灶（哪一阶段丢的）与性能瓶颈（哪一阶段慢）。结果在 [Analytics 面板](#analytics-分析面板) 的「召回漏斗」可视化。
+
+---
+
+## 管理后台（Dashboard）
+
+随 Server 自带 Web 管理后台（`http://<host>:3002`，登录后默认进入仪表盘）。界面为 **Sentry 风格**（紫午夜画布 + 电光青柠 accent，深色/浅色双主题，可在设置中切换），全中文界面。
+
+| 页面 | 能力 |
+|------|------|
+| 仪表盘（默认首页） | 记忆/实体/请求统计卡 + 成功率/平均延迟 + 最近请求与记忆 |
+| 全局搜索 | 顶栏搜索框即时检索全部记忆（SQL 层，不受条数限制），回车直达记忆页搜索结果 |
+| 记忆 | 列表/详情/历史演化查看、按用户/类型/时间筛选、单选与批量删除、语义结果页 |
+| 请求 | API 请求日志：方法/状态段/时间筛选、统计卡、详情抽屉 |
+| 实体 | 实体统计卡（用户/代理/运行分布）、类型筛选、详情抽屉 |
+| 分析 | 五个中文数据面板（搜索质量/反馈回路/热度健康/操作/召回漏斗） |
+| API 密钥 | 创建/吊销/列表管理 |
+| 配置 | LLM / 嵌入 / 重排序 / 图数据存储独立配置（provider、model、API Key、Base URL）+ 检索参数（深度检索、车道、重排阈值）+ 提取指令编辑，**保存即热生效** |
+| 设置 | 深色/浅色主题切换、修改密码、实例信息（当前模型与存储后端）、**深度路由词汇管理**（minimal/standard/full 三级词汇增删，命中即路由，无需重启） |
+
+### 界面预览
+
+管理后台界面预览（记忆内容已脱敏模糊）：
+
+**仪表盘**（默认首页）：记忆/实体/请求统计卡 + 成功率/平均延迟 + 最近请求与记忆
+
+![仪表盘总览](docs/screenshots/dashboard-preview-1.png)
+
+**记忆页**：列表/详情/历史演化查看、按用户/类型/时间筛选、单选与批量删除、语义结果页
+
+![记忆管理](docs/screenshots/dashboard-preview-2.png)
+
+**请求页**：API 请求日志（方法/状态段/时间筛选）、统计卡、详情抽屉
+
+![请求日志](docs/screenshots/dashboard-preview-3.png)
+
+**实体页**：实体统计卡（用户/代理/运行分布）、类型筛选、详情抽屉
+
+![实体管理](docs/screenshots/dashboard-preview-4.png)
+
+### Analytics 分析面板
+
+五个中文数据面板：
+
+| 面板 | 内容 |
+|------|------|
+| 搜索质量 | 查询量/零命中率/平均分/延迟（7/30 天）+ 每日趋势 + 零命中 Top 查询 |
+| 反馈回路 | useful/useless/correction 分布 + 被纠正最多记忆 |
+| 热度健康 | 热度分布 + 高频记忆 + 未召回清单（可点「清理/保留」决策）+ 提权记录 |
+| 操作 | 请求量/延迟/成功率 |
+| 召回漏斗 | 搜索各阶段命中数与耗时（RECALL trace） |
+
+![Analytics 分析面板](docs/screenshots/dashboard-preview-5.png)
+
+---
+
 ## 配置
 
 ### config.json（模型与图存储）
@@ -219,11 +356,13 @@ results = m.search("alice 喜欢什么？", user_id="alice")
 
 dashboard 配置页是可视化编辑入口：保存 = 原子写 `config.json`（进程内热生效 + 重启后持久），不写 DB。
 
+![Dashboard 配置/设置页](docs/screenshots/dashboard-preview-6.png)
+
 | 块 | 说明 |
 |----|------|
 | `llm` | 事实提取大模型（OpenAI 兼容任意服务），支持 `fallbacks` 多层兜底 |
-| `embedder` | 向量模型（OpenAI / VoyageAI / 本地 bge 等） |
-| `reranker` | 可选，配置后搜索自动重排序 |
+| `embedder` | 向量模型（OpenAI / VoyageAI / 本地 bge 等），VoyageAI base64 自动适配、pgvector 维度自动检测 |
+| `reranker` | 可选，SiliconFlow 原生支持，配置后搜索自动重排序（分数阈值过滤可调） |
 | `graph_store` | `provider: "falkordb"`，见 [docs/falkordb-integration.md](docs/falkordb-integration.md) |
 
 **推理模型适配**：若 LLM 把回复放在 `reasoning_content` 而 `content` 为空（典型：自部署 Qwen3.5 / DeepSeek-R1），记忆提取会全部为空（日志 `results=0`）。在 `llm.config` 加：
@@ -274,144 +413,7 @@ MEM0_TEMPORAL_TOP_K=20                # 时间召回条数上限
 MEM0_TEMPORAL_FORCE_FULL=true         # 时间意图查询强制 full 档（默认开）
 ```
 
-完整变量清单见 [server/README.md](server/README.md) 性能调优节。
-
----
-
-## 功能详解
-
-### 图存储（FalkorDB）
-
-- 图存储接口层完整恢复，FalkorDB 直接编译进 `GraphStoreFactory`，配置即用，无需补丁
-- 每用户独立图（`mem0_{user_id}`），实体节点 + 关系边 + 引用计数
-- 中文关系名（`部署于`、`偏好`）经 backtick 转义直接写入，无需英文映射
-- 详见 → **[docs/falkordb-integration.md](docs/falkordb-integration.md)**
-
-### 图记忆时效（Temporal Validity）
-
-冲突消解从「物理删除」改为「失效保留」：
-
-- 旧关系不再删除，写入 `invalidated_at` 标记失效
-- 检索默认只返回有效事实（`invalidated_at IS NULL`）
-- 同事实再次出现自动复活（重置失效标记）
-- 存量关系无标记视为有效，向后兼容；零额外 LLM 调用
-
-**价值**：LLM 误判冲突只是「误失效」——可追溯、可恢复，而非永久丢失。
-
-### 记忆衰减
-
-```
-score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
-```
-
-| 档位 | 半衰期 | 触发 |
-|------|--------|------|
-| 永不衰减 | ∞ | LLM 判 importance=5 |
-| 慢衰减 | ~100 天 | lane=slow / 关键词含「踩坑/报错/步骤/流程/配置」 |
-| 正常衰减 | ~30 天 | 兜底 |
-| 快衰减 | ~20 天 | lane=fast / 关键词含「开心/心情/今天/临时」 |
-
-### 搜索深度路由
-
-| 深度 | 链路 | 降本 |
-|------|------|------|
-| `minimal` | 跳过全部检索（命中废话白名单） | 100% |
-| `standard` | embedding + BM25（跳过图 + rerank） | ~70% |
-| `full` | embedding + BM25 + 图 + rerank（默认） | 0% |
-
-深度自动判定在 `Memory.search()` 入口执行；词表存 SQLite `search_keywords` 表（路径 `/app/history/history.db`），增删词即生效，无需重启。每次搜索实际走的深度记录在 `evolve_queries.depth`，可在 Analytics「召回漏斗」观测。
-
-**时间意图自动升档**：查询带时间意图（如"最近部署了什么"）时，即使被路由到 `minimal`/`standard` 档也会强制按 `full` 执行（时间声部与 rerank 依赖 full 链路），保证"最近发生了什么"类查询拿到时间加权结果。可用 `MEM0_TEMPORAL_FORCE_FULL=false` 关闭。
-
-### 记忆热度体系
-
-- 每条记忆随搜索更新 `access_count` / `last_access_at`
-- 热度分参与排序：`最终分 = 向量分 × decay × (1 + 权重 × heat_effective)`
-  - `heat_effective = min(access_count/100, 1) + (salience_score − 1)`
-  - 权重由 `MEM0_EVOLVE_RANK_WEIGHT` 控制，默认 0 时不改变现有排序
-- 时间衰减管「时间」，热度管「使用频率」，互不叠加
-
-### 显式反馈闭环
-
-对话层捕获用户纠正信号（或人工在接口/面板标记），通过 `POST /evolve/feedback` 调整记忆热度分：
-
-| 反馈 | 热度变化 |
-|------|---------|
-| useful（有用） | +0.1 |
-| useless（无用） | −0.15 |
-| correction（内容错误） | −0.05 |
-
-只改热度分、不改记忆内容；每条反馈落审计表（evolve_feedback / evolve_salience_adjustments），可追溯、误报可逆。
-
-### 进化循环（cron 每日 06:00）
-
-- **高频提权**：access_count ≥ 5 的记忆自动加分（`+min(0.05, (acc−4)×0.01)`，上限 1.5），当日幂等
-- **零命中统计**：24h 内零命中查询聚合清单
-- **未召回清单**：14 天未被召回的观察清单（只提示不自动降权，由人决策）
-
-### 管理后台（Dashboard）
-
-随 Server 自带 Web 管理后台（`http://<host>:3002`，登录后默认进入仪表盘）。界面为 **Sentry 风格**（紫午夜画布 + 电光青柠 accent，深色/浅色双主题，可在设置中切换），全中文界面。
-
-| 页面 | 能力 |
-|------|------|
-| 仪表盘（默认首页） | 记忆/实体/请求统计卡 + 成功率/平均延迟 + 最近请求与记忆 |
-| 全局搜索 | 顶栏搜索框即时检索全部记忆（SQL 层，不受条数限制），回车直达记忆页搜索结果 |
-| 记忆 | 列表/详情/历史演化查看、按用户/类型/时间筛选、单选与批量删除、语义结果页 |
-| 请求 | API 请求日志：方法/状态段/时间筛选、统计卡、详情抽屉 |
-| 实体 | 实体统计卡（用户/代理/运行分布）、类型筛选、详情抽屉 |
-| 分析 | 五个中文数据面板（搜索质量/反馈闭环/热度健康/操作概览/召回漏斗） |
-| API 密钥 | 创建/吊销/列表管理 |
-| 配置 | LLM / 嵌入 / 重排序 / 图数据存储独立配置（provider、model、API Key、Base URL）+ 检索参数（深度检索、车道、重排阈值）+ 提取指令编辑，**保存即热生效** |
-| 设置 | 深色/浅色主题切换、修改密码、实例信息（当前模型与存储后端）、**深度路由词汇管理**（minimal/standard/full 三级词汇增删，命中即路由，无需重启） |
-
-管理后台仪表盘（记忆内容已脱敏模糊）：
-
-![仪表盘预览](docs/screenshots/dashboard-preview.png)
-
-### Analytics 面板（Dashboard）
-
-五个中文数据面板：
-
-| 面板 | 内容 |
-|------|------|
-| 搜索质量 | 查询量/零命中率/平均分/延迟（7/30 天）+ 每日趋势 + 零命中 Top 查询 |
-| 反馈闭环 | useful/useless/correction 分布 + 被纠正最多记忆 |
-| 热度健康 | 热度分布 + 高频记忆 + 未召回清单（可点「清理/保留」决策）+ 提权记录 |
-| 操作概览 | 请求量/延迟/成功率 |
-| 召回漏斗 | 搜索五阶段命中数与耗时（RECALL trace） |
-
-### RECALL 召回漏斗
-
-搜索链路每个阶段采集命中数与耗时：候选池 → 阈值过滤 → 时间衰减 → 图召回 → **时间声部** → 重排序 → 最终。用于定位「搜不到」的病灶（哪一阶段丢的）与性能瓶颈（哪一阶段慢）。
-
-### 语义去重（cron 每日 05:00）
-
-三层判定合并近重复记忆：
-
-1. 向量粗筛：cosine 相似度 > 阈值（无 LLM）
-2. 字符 Jaccard 预筛：明显不同措辞直接跳过（无 LLM）
-3. LLM 二元判定：剩余候选对「同事实？YES/NO」
-
-只合并近重复、不压缩内容，安全性优先。
-
-### 矛盾检测
-
-开启后 LLM 在每次写入时自动对比新消息与已有记忆，发现矛盾自动清理旧记忆，写入即检测。
-
-### 时间推理
-
-每条记忆自动标注 `temporal`（PAST/PRESENT/FUTURE/TIMELESS），搜索可用 `filters: {"temporal": "FUTURE"}` 过滤；零额外 LLM 调用。
-
-### 时间声部检索
-
-解决"最近部署了什么""昨天说过什么"这类查询——语义检索对时间维度是盲的，新旧记忆混在一起。时间声部让"时间"成为一路独立检索信号：
-
-- **时间意图检测**：查询含中英文时间词（最近/近 N 天/N 小时前/昨天/上周/今年… 或 ISO 日期）时识别出时间窗口；强信号（最近/最新，w=0.7）与弱信号（昨天/本周，w=0.4）分档；"今天天气怎么样"类语义查询（天气/新闻/汇率/股票/日程/待办）被排除表拦下，不触发
-- **时间召回**：按时间窗口从 pgvector 倒序召回（内容发生时间 `temporal_date` 优先、记录时间 `created_at` 回退，全链路 Asia/Shanghai 时区），过期/失效记忆过滤，表达式索引加速
-- **融合排序**：时间候选与向量/图候选一起过 rerank 并豁免阈值；时间意图下全部候选按 `w × 时间衰减分 + (1−w) × 语义分` 融合排序——近期记忆系统性靠前，普通查询零变化
-- **观测**：trace 新增 temporal 阶段与 `temporal_triggered` 标记，落 `evolve_queries` 表可在 Analytics「召回漏斗」查看触发情况
-- 开关与参数：`MEM0_TEMPORAL_VOICE` / `MEM0_TEMPORAL_WINDOW_DAYS` / `MEM0_TEMPORAL_HALFLIFE_HOURS` / `MEM0_TEMPORAL_TOP_K` / `MEM0_TEMPORAL_FORCE_FULL`
+全部 92 个变量的完整清单与性能调优说明见 [server/README.md](server/README.md)。
 
 ---
 
