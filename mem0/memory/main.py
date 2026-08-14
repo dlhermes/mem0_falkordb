@@ -845,6 +845,7 @@ class Memory(MemoryBase):
         # Entity store is initialized lazily on first use
         self._entity_store = None
         self.on_memory_deleted = None
+        self.on_memory_added = None
         self._graph_write_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=int(os.environ.get("MEM0_GRAPH_MAX_WORKERS", "5"))
         )
@@ -1250,6 +1251,9 @@ class Memory(MemoryBase):
             "add pipeline complete: elapsed=%.1fs, results=%d",
             _add_elapsed, len(vector_store_result) if isinstance(vector_store_result, list) else 0,
         )
+        for item in vector_store_result or []:
+            if item.get("event") == "ADD" and item.get("id"):
+                self._notify_memory_added(item["id"])
         return {"results": vector_store_result}
 
     def _add_to_vector_store(self, messages, metadata, filters, infer, prompt=None):
@@ -1287,6 +1291,9 @@ class Memory(MemoryBase):
                         "role": message_dict["role"],
                     }
                 )
+            for item in returned_memories:
+                if item.get("event") == "ADD" and item.get("id"):
+                    self._notify_memory_added(item["id"])
             return returned_memories
 
         # === V3 PHASED BATCH PIPELINE ===
@@ -3067,6 +3074,20 @@ class Memory(MemoryBase):
         except Exception:
             logger.exception("on_memory_deleted callback failed for memory %s", memory_id)
 
+    def _notify_memory_added(self, memory_id):
+        """Best-effort on_memory_added callback (fired per newly added memory).
+
+        A failing callback must never break the add flow, so exceptions are
+        logged and swallowed. No-op when no callback is registered (SDK-direct
+        use stays zero-behavior-change).
+        """
+        if self.on_memory_added is None:
+            return
+        try:
+            self.on_memory_added(memory_id)
+        except Exception:
+            logger.exception("on_memory_added callback failed for memory %s", memory_id)
+
     def _delete_memory(self, memory_id, existing_memory=None):
         logger.info(f"Deleting memory with {memory_id=}")
         if existing_memory is None:
@@ -3174,6 +3195,7 @@ class AsyncMemory(MemoryBase):
         self.custom_instructions = self.config.custom_instructions
         self._entity_store = None
         self.on_memory_deleted = None
+        self.on_memory_added = None
         self._graph_write_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=int(os.environ.get("MEM0_GRAPH_MAX_WORKERS", "5"))
         )
@@ -3545,6 +3567,9 @@ class AsyncMemory(MemoryBase):
             await display_scale_threshold_notice_async(self, "async", "add", *scale_threshold_notice)
         else:
             await display_first_run_notice_async(self, "async", "add")
+        for item in vector_store_result or []:
+            if item.get("event") == "ADD" and item.get("id"):
+                self._notify_memory_added(item["id"])
         return {"results": vector_store_result}
 
     async def _add_to_vector_store(
@@ -3589,6 +3614,9 @@ class AsyncMemory(MemoryBase):
                         "role": message_dict["role"],
                     }
                 )
+            for item in returned_memories:
+                if item.get("event") == "ADD" and item.get("id"):
+                    self._notify_memory_added(item["id"])
             return returned_memories
 
         # === V3 PHASED BATCH PIPELINE (async) ===
@@ -5409,6 +5437,15 @@ class AsyncMemory(MemoryBase):
             self.on_memory_deleted(memory_id)
         except Exception:
             logger.exception("on_memory_deleted callback failed for memory %s", memory_id)
+
+    def _notify_memory_added(self, memory_id):
+        """Best-effort on_memory_added callback (async mirror of sync)."""
+        if self.on_memory_added is None:
+            return
+        try:
+            self.on_memory_added(memory_id)
+        except Exception:
+            logger.exception("on_memory_added callback failed for memory %s", memory_id)
 
     async def _delete_memory(self, memory_id, existing_memory=None, skip_entity_cleanup=False):
         logger.info(f"Deleting memory with {memory_id=}")

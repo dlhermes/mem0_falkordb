@@ -130,6 +130,49 @@ def _attach_delete_cleanup(memory: Memory) -> Memory:
     return memory
 
 
+def _register_salience_on_add(session_factory, memory_id: str) -> None:
+    """Insert an evolve_salience row for a freshly added memory (best-effort).
+
+    Salience was previously lazily registered on first search hit, so
+    never-searched memories never surfaced in the stale/idle list. Now they are
+    registered at write time. INSERT-if-absent (repeated triggers from e.g.
+    refine apply are no-ops); failures are swallowed so a broken registration
+    never breaks the add flow.
+    """
+    if session_factory is None:
+        return
+    from datetime import datetime, timezone
+
+    from models import EvolveSalience
+
+    session = session_factory()
+    try:
+        now = datetime.now(timezone.utc)
+        if session.get(EvolveSalience, memory_id) is None:
+            session.add(
+                EvolveSalience(
+                    memory_id=memory_id,
+                    access_count=0,
+                    last_access_at=now,
+                    salience_score=1.0,
+                    updated_at=now,
+                )
+            )
+            session.commit()
+    except Exception:
+        session.rollback()
+        logging.exception("Failed to register evolve salience for memory %s", memory_id)
+    finally:
+        session.close()
+
+
+def _attach_memory_added_cleanup(memory: Memory) -> Memory:
+    """Register freshly added memories into evolve_salience at write time."""
+    if _session_factory is not None:
+        memory.on_memory_added = lambda memory_id: _register_salience_on_add(_session_factory, memory_id)
+    return memory
+
+
 def initialize_state(default_config: Dict[str, Any]) -> None:
     global _current_config, _memory_instance
     with _state_lock:
@@ -140,8 +183,10 @@ def initialize_state(default_config: Dict[str, Any]) -> None:
         overrides = _load_overrides()
         if overrides:
             _current_config = _merge_config(_current_config, overrides)
-        _memory_instance = _attach_delete_cleanup(
-            _attach_salience_provider(Memory.from_config(_current_config))
+        _memory_instance = _attach_memory_added_cleanup(
+            _attach_delete_cleanup(
+                _attach_salience_provider(Memory.from_config(_current_config))
+            )
         )
 
 
@@ -165,8 +210,10 @@ def update_config(updates: Dict[str, Any]) -> Dict[str, Any]:
         next_config = _merge_config(_current_config, updates)
         _save_config_file(_config_file_path(), next_config)
         _current_config = next_config
-        _memory_instance = _attach_delete_cleanup(
-            _attach_salience_provider(Memory.from_config(next_config))
+        _memory_instance = _attach_memory_added_cleanup(
+            _attach_delete_cleanup(
+                _attach_salience_provider(Memory.from_config(next_config))
+            )
         )
         return deepcopy(_current_config)
 
