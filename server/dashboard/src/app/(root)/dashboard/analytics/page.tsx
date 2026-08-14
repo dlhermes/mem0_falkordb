@@ -14,6 +14,7 @@ import {
   YAxis,
   type TooltipProps,
 } from "recharts";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -26,8 +27,9 @@ import {
 import { DataTable } from "@/components/shared/data-table";
 import { TableSkeleton } from "@/components/shared/table-skeleton";
 import { getErrorMessage } from "@/lib/error-message";
+import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/utils/api";
-import { EVOLVE_ENDPOINTS, MEMORY_ENDPOINTS } from "@/utils/api-endpoints";
+import { EVOLVE_ENDPOINTS, MEMORY_ENDPOINTS, REFINE_ENDPOINTS } from "@/utils/api-endpoints";
 import { useApiQuery } from "@/hooks/use-api-query";
 import { toast } from "@/components/ui/use-toast";
 import type {
@@ -36,7 +38,25 @@ import type {
   Memory,
   MemoryTypeDistribution,
   RecallStageStat,
+  RefineCandidate,
 } from "@/types/api";
+
+const REFINE_STATUS_LABELS: Record<string, string> = {
+  proposed: "建议稿",
+  applied: "已应用",
+  rolled_back: "已回滚",
+  failed: "失败",
+};
+
+const REFINE_STATUS_VARIANTS: Record<
+  string,
+  "violet" | "success" | "warning" | "danger"
+> = {
+  proposed: "violet",
+  applied: "success",
+  rolled_back: "warning",
+  failed: "danger",
+};
 
 const MEMORY_TYPE_LABELS: Record<string, string> = {
   FACTS: "客观事实",
@@ -451,6 +471,8 @@ function TrendTooltip({ active, payload, label }: TooltipProps<number, string>) 
 
 export default function AnalyticsPage() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const { user } = useAuth();
+  const [generating, setGenerating] = useState(false);
 
   const {
     data: report = EMPTY_REPORT,
@@ -475,6 +497,78 @@ export default function AnalyticsPage() {
     },
     { errorToast: "加载记忆构成失败", initialData: { distribution: [] } },
   );
+
+  const refineUserId = user?.id ? { user_id: user.id } : undefined;
+  const {
+    data: refineData = { candidates: [], history: [] },
+    refetch: refetchRefine,
+  } = useApiQuery<{ candidates: RefineCandidate[]; history: RefineCandidate[] }>(
+    async () => {
+      const [c, h] = await Promise.all([
+        api.get<{ candidates: RefineCandidate[] }>(REFINE_ENDPOINTS.CANDIDATES, {
+          params: refineUserId,
+        }),
+        api.get<{ history: RefineCandidate[] }>(REFINE_ENDPOINTS.HISTORY, {
+          params: refineUserId,
+        }),
+      ]);
+      return {
+        candidates: c.data?.candidates ?? [],
+        history: h.data?.history ?? [],
+      };
+    },
+    { errorToast: "加载精炼数据失败", initialData: { candidates: [], history: [] } },
+  );
+
+  const handleGenerateCandidates = async () => {
+    setGenerating(true);
+    try {
+      const res = await api.post<{ candidates: RefineCandidate[] }>(
+        REFINE_ENDPOINTS.CANDIDATES,
+        undefined,
+        { params: refineUserId },
+      );
+      const count = res.data?.candidates?.length ?? 0;
+      toast({ title: `已生成 ${count} 个候选`, variant: "success" });
+      void refetchRefine();
+    } catch (err) {
+      toast({
+        title: "生成候选失败",
+        description: getErrorMessage(err),
+        variant: "destructive",
+      });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleApplyCandidate = async (candidate: RefineCandidate) => {
+    try {
+      await api.post(REFINE_ENDPOINTS.APPLY, { candidate_id: candidate.id });
+      toast({ title: "候选已应用", variant: "success" });
+      void refetchRefine();
+    } catch (err) {
+      toast({
+        title: "应用失败",
+        description: getErrorMessage(err),
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRollbackCandidate = async (candidate: RefineCandidate) => {
+    try {
+      await api.post(REFINE_ENDPOINTS.ROLLBACK, { candidate_id: candidate.id });
+      toast({ title: "候选已回滚", variant: "success" });
+      void refetchRefine();
+    } catch (err) {
+      toast({
+        title: "回滚失败",
+        description: getErrorMessage(err),
+        variant: "destructive",
+      });
+    }
+  };
 
   const totalMemories = typeDist.distribution.reduce((s, d) => s + (d.count ?? 0), 0);
   const typeItems = typeDist.distribution.map((d) => {
@@ -849,6 +943,19 @@ export default function AnalyticsPage() {
               )}
             </Section>
             <Section title="闲置记忆（14 天以上未召回）">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-xs text-onSurface-default-tertiary">
+                  将碎片化记忆压缩为高层抽象，生成候选后可人工确认应用。
+                </span>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={() => void handleGenerateCandidates()}
+                  disabled={generating}
+                >
+                  生成精炼候选
+                </Button>
+              </div>
               {heat.stale.length > 0 ? (
                 <DataTable
                   data={heat.stale}
@@ -868,6 +975,113 @@ export default function AnalyticsPage() {
                 />
               ) : (
                 <NoData />
+              )}
+            </Section>
+          </Panel>
+
+          <Panel
+            title="记忆精炼"
+            description="碎片化记忆经 LLM 压缩为高层抽象建议稿；确认应用后写入记忆库并软标记原记忆，可回滚。"
+          >
+            <Section title="候选（建议稿）">
+              {refineData.candidates.length > 0 ? (
+                <div className="space-y-3">
+                  {refineData.candidates.map((c) => (
+                    <div
+                      key={c.id}
+                      className="space-y-2 rounded-md border border-memBorder-primary bg-surface-default-primary p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-onSurface-default-primary">
+                          {c.topic || `候选 #${c.id}`}
+                        </span>
+                        <Badge variant={REFINE_STATUS_VARIANTS[c.status] ?? "violet"}>
+                          {REFINE_STATUS_LABELS[c.status] ?? c.status}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-onSurface-default-tertiary">
+                        组内 {c.memory_ids.length} 条原记忆
+                      </p>
+                      <ul className="space-y-1">
+                        {c.suggested_text.map((s, i) => (
+                          <li
+                            key={i}
+                            className="text-sm text-onSurface-default-primary"
+                          >
+                            · {s}
+                          </li>
+                        ))}
+                      </ul>
+                      {c.status === "proposed" && (
+                        <div className="flex justify-end">
+                          <Button
+                            variant="outline"
+                            size="xs"
+                            onClick={() => void handleApplyCandidate(c)}
+                          >
+                            确认应用
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <NoData text="暂无精炼候选。可在上方未召回清单点击「生成精炼候选」" />
+              )}
+            </Section>
+
+            <Section title="历史">
+              {refineData.history.length > 0 ? (
+                <div className="space-y-3">
+                  {refineData.history.map((c) => (
+                    <div
+                      key={c.id}
+                      className="space-y-2 rounded-md border border-memBorder-primary bg-surface-default-primary p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-onSurface-default-primary">
+                          {c.topic || `候选 #${c.id}`}
+                        </span>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Badge variant={REFINE_STATUS_VARIANTS[c.status] ?? "violet"}>
+                            {REFINE_STATUS_LABELS[c.status] ?? c.status}
+                          </Badge>
+                          {c.status === "applied" && (
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              className="text-onSurface-danger-primary"
+                              onClick={() => void handleRollbackCandidate(c)}
+                            >
+                              回滚
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-xs text-onSurface-default-tertiary">
+                        组内 {c.memory_ids.length} 条原记忆
+                        {c.updated_at
+                          ? ` · ${fmtDateTime(c.updated_at)}`
+                          : ""}
+                      </p>
+                      {c.suggested_text.length > 0 && (
+                        <ul className="space-y-1">
+                          {c.suggested_text.map((s, i) => (
+                            <li
+                              key={i}
+                              className="text-sm text-onSurface-default-primary"
+                            >
+                              · {s}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <NoData text="暂无已应用或已回滚的记录" />
               )}
             </Section>
           </Panel>

@@ -21,6 +21,19 @@ export interface MemoryTypeDistribution {
   distribution: MemoryTypeDistributionItem[];
 }
 
+export interface RefineCandidate {
+  id: number;
+  user_id: string;
+  memory_ids: string[];
+  topic: string | null;
+  status: "proposed" | "applied" | "rolled_back" | "failed";
+  suggested_text: string[];
+  refined_memory_id: string | null;
+  refined_memory_ids: string[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface MemoryHistoryEntry {
   id: string;
   memory_id: string;

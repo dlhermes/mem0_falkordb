@@ -41,6 +41,13 @@ export const EVOLVE_ENDPOINTS = {
     `/evolve/memory/${encodeURIComponent(memoryId)}/retain`,
 } as const;
 
+export const REFINE_ENDPOINTS = {
+  CANDIDATES: "/memory/refine/candidates",
+  APPLY: "/memory/refine/apply",
+  ROLLBACK: "/memory/refine/rollback",
+  HISTORY: "/memory/refine/history",
+} as const;
+
 export const SEARCH_KEYWORDS_ENDPOINTS = {
   BASE: "/search-keywords",
   BY_ID: (id: number) => `/search-keywords/${id}`,
