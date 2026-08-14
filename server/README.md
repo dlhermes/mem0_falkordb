@@ -219,6 +219,7 @@ cd /data/mem0_falkordb/server && docker compose up -d --force-recreate mem0
   - `POST /memory/refine/apply {"candidate_id": N}` — 人工确认应用（逐条建议稿 `infer=False` 写库 + 原记忆 soft-superseded；非 proposed 返回 409，可重试）
   - `POST /memory/refine/rollback {"candidate_id": N}` — 回滚（删除新记忆 + 还原原记忆 superseded 标记；非 applied 返回 409）
   - `GET /memory/refine/history?user_id=xxx` — 已应用/已回滚记录（含建议稿、时间、新记忆 id）
+  - **Admin 语义**：admin 不传 `user_id` 时，候选/历史返回全部用户的记录（响应每项带 `user_id`），POST 生成候选对全部用户执行；非 admin 只作用自身
 - **cron 脚本**：`python3 scripts/refine_candidates.py` — 只生成候选写候选表，**永不自动 apply**（`REFINE_DRY_RUN=true` 只报告不写库）
 
 ### Dashboard 功能
@@ -358,6 +359,9 @@ cd /data/mem0_falkordb/server && docker compose up -d --force-recreate mem0
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `MEM0_EVOLVE_RANK_WEIGHT` | `0` | 热度排序加成权重（>0 生效，建议 0.1-0.3 起步） |
+
+- **salience 写入时注册**：记忆写入即插入 `evolve_salience`（`access_count=0`），搜索命中时递增——从未被召回的记忆也会进入未召回清单；重复触发不重复插入
+- **未召回清单孤儿过滤**：记忆已从向量库删除的 salience 残留记录不再显示（操作不会对幽灵记忆失败）
 
 ### 记忆类型权重
 

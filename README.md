@@ -239,7 +239,7 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 
 #### 记忆热度体系
 
-- 每条记忆随搜索更新 `access_count` / `last_access_at`
+- 记忆写入时即注册 salience（`access_count=0`），搜索命中时递增 `access_count` / `last_access_at`——从未被召回的记忆也会进入未召回清单
 - 热度分参与排序：在向量/BM25/实体综合分（归一化）基础上叠加热度乘数 `(1 + 权重 × heat_effective)`
   - `heat_effective = min(access_count/100, 1) + (salience_score − 1)`
   - 权重由 `MEM0_EVOLVE_RANK_WEIGHT` 控制，默认 0 时不改变现有排序
@@ -289,7 +289,7 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 
 - **写入分类**：提取时 LLM 输出 `metadata.memory_type`；缺失/非法值走关键词兜底（Phase 2.7，sync/async 双路径），都未命中 → `FACTS`
 - **存量回填**：`server/scripts/backfill_memory_types.py`（规则优先、`--use-llm` 可选、`PRUNE_DRY_RUN` 支持、幂等，重跑天然断点续跑）
-- **检索过滤**：`search` filters 支持 `{"type": "PREFERENCES"}`（别名，自动映射为 `memory_type`）或 `{"memory_type": "EXPERIENCES"}` 直接过滤
+- **检索过滤**：`search` filters 支持 `{"type": "PREFERENCES"}`（别名，自动映射为 `memory_type`）或 `{"memory_type": "EXPERIENCES"}` 直接过滤；带类型过滤的搜索会**跳过图召回合成条目**（无 memory_type 的「src 关系 dst」碎片不混入结果），普通搜索图召回照常
 - **类型权重**：排序时对综合分乘类型权重，默认 1.0 = 零行为变化；环境变量 `MEM0_TYPE_WEIGHT_FACTS` / `MEM0_TYPE_WEIGHT_PREFERENCES` / `MEM0_TYPE_WEIGHT_EXPERIENCES` / `MEM0_TYPE_WEIGHT_OBSERVATIONS` / `MEM0_TYPE_WEIGHT_DECISIONS`（非法值回退 1.0）
 - **Dashboard**：记忆页「全部类型」筛选下拉；分析面板「记忆构成」类型分布（端点 `GET /memories/types-distribution`）
 
@@ -304,6 +304,7 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
   - `POST /memory/refine/apply {"candidate_id": N}` — 人工确认应用（写记忆库 + 原记忆 soft-superseded；非 proposed 返回 409）
   - `POST /memory/refine/rollback {"candidate_id": N}` — 回滚（删除新记忆 + 还原原记忆；非 applied 返回 409）
   - `GET /memory/refine/history?user_id=xxx` — 已应用/已回滚记录
+  - **Admin 语义**：admin 不传 `user_id` 时，候选/历史返回全部用户的记录（响应每项带 `user_id`），POST 生成候选对全部用户执行；非 admin 只作用自身
 - **cron 脚本**：`server/scripts/refine_candidates.py` — 只生成候选，**永不自动 apply**（`REFINE_DRY_RUN` 支持）
 - **Dashboard**：分析面板「记忆精炼」（候选建议稿预览 / 确认应用 / 历史回滚）
 
@@ -315,7 +316,7 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 
 - **高频提权**：access_count ≥ 5 的记忆自动加分（`+min(0.05, (acc−4)×0.01)`，上限 1.5），当日幂等
 - **零命中统计**：24h 内零命中查询聚合清单
-- **未召回清单**：14 天未被召回的观察清单（只提示不自动降权，由人决策）
+- **未召回清单**：14 天未被召回的观察清单（只提示不自动降权，由人决策）；记忆已删除的 salience 残留不再显示（孤儿过滤）
 
 #### RECALL 召回漏斗
 

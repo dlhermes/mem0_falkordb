@@ -190,3 +190,4 @@ results = m.search("发哥部署在哪里", user_id="alice", depth="full")
 - 每用户独立图，互不干扰
 - 图搜索为 full 深度的可选增强：`MEM0_SEARCH_DEPTH_DEFAULT=standard` 时跳过图查询（降本但丢失关系召回）
 - 清理脚本会同步清理 FalkorDB 孤立实体节点（无任何关系的节点）
+- **图召回合成条目**：搜索时图召回会生成「src 关系 dst」的合成文本条目（如「发哥 偏好 龙井茶」），id 为临时 uuid，不含 payload/metadata/memory_type。当搜索带 `memory_type` 类型过滤时（filters 含 `memory_type` 或别名 `type`），**图召回整体跳过**——合成条目无类型无法满足过滤条件；普通搜索（无类型过滤）图召回照常。
