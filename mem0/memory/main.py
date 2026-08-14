@@ -554,13 +554,16 @@ def _build_extraction_chunks(
 
 
 
-def _semantic_merge_text(llm, old_text, new_text):
+def _semantic_merge_text(llm, old_text, new_texts):
     """Merge old memory text with newly extracted facts via a dedicated LLM call.
 
     UPDATE = merge, not replace: the old text is fed back together with the
     new facts so still-valid details (ports, IPs, numbers, dates, names) are
-    preserved. Falls back to ``new_text`` unchanged on any failure (no old
-    text, exception, empty/non-string output) so the pipeline never degrades.
+    preserved. ``new_texts`` may be a single text or a list (chunked extraction
+    can emit several UPDATE facts for the same memory); multi-fact inputs are
+    numbered so the LLM consolidates them into one merged memory. Falls back
+    to the extracted text(s) unchanged on any failure (no old text, exception,
+    empty/non-string output) so the pipeline never degrades.
 
     2026-08-12 修复：服务端 LLM（llm-server）强制 JSON 输出。此前本调用未传
     response_format，合并结果被 LLM 包成 JSON 壳（如 {"id": ..., "content": ...}
@@ -568,15 +571,25 @@ def _semantic_merge_text(llm, old_text, new_text):
     正文全部是 ADD 正常 → UPDATE 变 JSON）。现在显式传 response_format 并解析
     merged_text 字段，兼容 LLM 直接返回纯文本的旧行为。
     """
+    if isinstance(new_texts, str):
+        new_texts = [new_texts]
+    if len(new_texts) == 1:
+        fallback = new_texts[0]
+    else:
+        fallback = "\n".join(new_texts)
     if not old_text or not str(old_text).strip():
-        return new_text
+        return fallback
     try:
+        if len(new_texts) == 1:
+            new_facts = new_texts[0]
+        else:
+            new_facts = "\n".join(f"{i}. {t}" for i, t in enumerate(new_texts, 1))
         response = llm.generate_response(
             messages=[
                 {"role": "system", "content": SEMANTIC_MERGE_PROMPT},
                 {
                     "role": "user",
-                    "content": f"【旧记忆】\n{old_text}\n\n【新事实】\n{new_text}\n\n"
+                    "content": f"【旧记忆】\n{old_text}\n\n【新事实】\n{new_facts}\n\n"
                     "请输出合并后的完整记忆文本。你必须严格返回 JSON 格式："
                     '{"merged_text": "合并后的完整记忆文本"}，不要其他任何内容。',
                 },
@@ -585,11 +598,11 @@ def _semantic_merge_text(llm, old_text, new_text):
         )
     except Exception as e:
         logger.warning("Semantic merge failed, using extracted text as-is: %s", e)
-        return new_text
+        return fallback
     merged = response.strip() if isinstance(response, str) else ""
     if not merged:
         logger.warning("Semantic merge returned empty output, using extracted text as-is")
-        return new_text
+        return fallback
     # LLM 强制 JSON 输出时返回 {"merged_text": "..."}，解析取文本；
     # 兜底兼容：解析失败或非 JSON 时按纯文本使用（旧行为）。
     try:
@@ -1470,6 +1483,8 @@ class Memory(MemoryBase):
         records = []  # (memory_id, text, embedding, payload)
         delete_ids = []  # memory_ids to delete (UPDATE/DELETE events)
         update_records = []  # (memory_id, text, embedding, payload) for re-inserts
+        update_facts_by_id = {}  # str(real_id) -> list[new fact text], order preserved
+        update_meta_by_id = {}  # str(real_id) -> last chunk's LLM metadata
         seen_hashes = set()  # dedup within the current batch
         for mem in extracted_memories:
             text = mem.get("text")
@@ -1488,28 +1503,12 @@ class Memory(MemoryBase):
                     # history (old_memory=original text) + on_memory_deleted hook.
                     delete_ids.append(str(real_id))
                 elif event == "UPDATE":
-                    # Semantic merge: preserve still-valid old details, merge new facts
-                    old_text = old_text_by_id.get(str(real_id), "")
-                    merged_text = _semantic_merge_text(self.llm, old_text, text)
-                    if merged_text in embed_map:
-                        merged_embedding = embed_map[merged_text]
-                    else:
-                        try:
-                            merged_embedding = self.embedding_model.embed(merged_text, "add")
-                        except Exception as e:
-                            logger.warning(f"Failed to embed merged update text, using extracted embedding: {e}")
-                            merged_embedding = embed_map[text]
-                    # Schedule re-insert with merged text
-                    mem_metadata_update = deepcopy(metadata)
-                    mem_metadata_update["data"] = merged_text
-                    mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
-                    mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
-                    mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
-                    llm_meta = mem.get("metadata") or {}
-                    for k in ("temporal", "temporal_date", "importance", "lane"):
-                        if k in llm_meta:
-                            mem_metadata_update[k] = llm_meta[k]
-                    update_records.append((str(real_id), merged_text, merged_embedding, mem_metadata_update))
+                    # Chunked extraction can emit several UPDATE events for the
+                    # same memory; aggregate all new facts per id and run ONE
+                    # semantic merge below (dedup guards against duplicate-id
+                    # re-inserts colliding on the vector store primary key).
+                    update_facts_by_id.setdefault(str(real_id), []).append(text)
+                    update_meta_by_id[str(real_id)] = mem.get("metadata") or {}
                 continue  # DELETE done; UPDATE handled via delete + re-insert below
 
             # ADD (default) — current logic
@@ -1539,6 +1538,33 @@ class Memory(MemoryBase):
                     mem_metadata[k] = llm_meta[k]
 
             records.append((memory_id, text, embed_map[text], mem_metadata))
+
+        # Merge phase: one LLM merge per id across all its new facts
+        delete_set = set(delete_ids)
+        for real_id, new_texts in update_facts_by_id.items():
+            if real_id in delete_set:
+                # DELETE wins over UPDATE for the same memory
+                continue
+            old_text = old_text_by_id.get(real_id, "")
+            merged_text = _semantic_merge_text(self.llm, old_text, new_texts)
+            if merged_text in embed_map:
+                merged_embedding = embed_map[merged_text]
+            else:
+                try:
+                    merged_embedding = self.embedding_model.embed(merged_text, "add")
+                except Exception as e:
+                    logger.warning(f"Failed to embed merged update text, using extracted embedding: {e}")
+                    merged_embedding = embed_map[new_texts[0]]
+            # Schedule re-insert with merged text
+            mem_metadata_update = deepcopy(metadata)
+            mem_metadata_update["data"] = merged_text
+            mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
+            mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
+            mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
+            for k in ("temporal", "temporal_date", "importance", "lane"):
+                if k in update_meta_by_id.get(real_id, {}):
+                    mem_metadata_update[k] = update_meta_by_id[real_id][k]
+            update_records.append((real_id, merged_text, merged_embedding, mem_metadata_update))
 
         if not records and not delete_ids and not update_records:
             self.db.save_messages(messages, session_scope)
@@ -3725,6 +3751,8 @@ class AsyncMemory(MemoryBase):
         records = []
         delete_ids = []
         update_records = []
+        update_facts_by_id = {}
+        update_meta_by_id = {}
         seen_hashes = set()
         for mem in extracted_memories:
             text = mem.get("text")
@@ -3743,29 +3771,12 @@ class AsyncMemory(MemoryBase):
                     # history (old_memory=original text) + on_memory_deleted hook.
                     delete_ids.append(str(real_id))
                 elif event == "UPDATE":
-                    # Semantic merge: preserve still-valid old details, merge new facts
-                    old_text = old_text_by_id.get(str(real_id), "")
-                    merged_text = await asyncio.to_thread(_semantic_merge_text, self.llm, old_text, text)
-                    if merged_text in embed_map:
-                        merged_embedding = embed_map[merged_text]
-                    else:
-                        try:
-                            merged_embedding = await asyncio.to_thread(
-                                self.embedding_model.embed, merged_text, "add"
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to embed merged update text, using extracted embedding: {e}")
-                            merged_embedding = embed_map[text]
-                    mem_metadata_update = deepcopy(metadata)
-                    mem_metadata_update["data"] = merged_text
-                    mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
-                    mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
-                    mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
-                    llm_meta = mem.get("metadata") or {}
-                    for k in ("temporal", "temporal_date", "importance", "lane"):
-                        if k in llm_meta:
-                            mem_metadata_update[k] = llm_meta[k]
-                    update_records.append((str(real_id), merged_text, merged_embedding, mem_metadata_update))
+                    # Chunked extraction can emit several UPDATE events for the
+                    # same memory; aggregate all new facts per id and run ONE
+                    # semantic merge below (dedup guards against duplicate-id
+                    # re-inserts colliding on the vector store primary key).
+                    update_facts_by_id.setdefault(str(real_id), []).append(text)
+                    update_meta_by_id[str(real_id)] = mem.get("metadata") or {}
                 continue
 
             # ADD (default)
@@ -3795,6 +3806,34 @@ class AsyncMemory(MemoryBase):
                     mem_metadata[k] = llm_meta[k]
 
             records.append((memory_id, text, embed_map[text], mem_metadata))
+
+        # Merge phase: one LLM merge per id across all its new facts
+        delete_set = set(delete_ids)
+        for real_id, new_texts in update_facts_by_id.items():
+            if real_id in delete_set:
+                # DELETE wins over UPDATE for the same memory
+                continue
+            old_text = old_text_by_id.get(real_id, "")
+            merged_text = await asyncio.to_thread(_semantic_merge_text, self.llm, old_text, new_texts)
+            if merged_text in embed_map:
+                merged_embedding = embed_map[merged_text]
+            else:
+                try:
+                    merged_embedding = await asyncio.to_thread(
+                        self.embedding_model.embed, merged_text, "add"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to embed merged update text, using extracted embedding: {e}")
+                    merged_embedding = embed_map[new_texts[0]]
+            mem_metadata_update = deepcopy(metadata)
+            mem_metadata_update["data"] = merged_text
+            mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
+            mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
+            mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
+            for k in ("temporal", "temporal_date", "importance", "lane"):
+                if k in update_meta_by_id.get(real_id, {}):
+                    mem_metadata_update[k] = update_meta_by_id[real_id][k]
+            update_records.append((real_id, merged_text, merged_embedding, mem_metadata_update))
 
         if not records and not delete_ids and not update_records:
             await asyncio.to_thread(self.db.save_messages, messages, session_scope)
