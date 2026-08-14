@@ -23,10 +23,15 @@ _SERVER_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "server")
 if _SERVER_DIR not in sys.path:
     sys.path.insert(0, _SERVER_DIR)
 
+_SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "server", "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
 from auth import require_auth  # noqa: E402
 from db import get_db  # noqa: E402
 from models import MemoryRefineCandidate  # noqa: E402
 from routers import refine as refine_router  # noqa: E402
+import refine_candidates  # noqa: E402
 import refine_memory  # noqa: E402
 
 _ADMIN = SimpleNamespace(role="admin", id="admin-1")
@@ -210,3 +215,204 @@ class TestRefineApi:
 
         assert client.post("/memory/refine/candidates").status_code == 401
         assert client.get("/memory/refine/candidates").status_code == 401
+
+
+def _candidate_row(user_id="u1", status="proposed", suggested_text=None, memory_ids=None, refined_memory_ids=None):
+    row = MemoryRefineCandidate(
+        user_id=user_id,
+        memory_ids=memory_ids or [],
+        topic="t",
+        status=status,
+        suggested_text=suggested_text or [],
+        refined_memory_ids=refined_memory_ids,
+    )
+    row.id = 1
+    return row
+
+
+class TestRefineApply:
+    def _apply_client(self, mocker, db, row, memory):
+        db.get.return_value = row
+        mocker.patch.object(refine_router, "get_memory_instance", return_value=memory)
+        return _make_app(db)
+
+    def test_apply_proposed_writes_and_marks_applied(self, mocker):
+        db = MagicMock()
+        row = _candidate_row(suggested_text=["摘要1", "摘要2"], memory_ids=["m1", "m2", "m3"])
+        memory = MagicMock()
+        memory.add.side_effect = [
+            {"results": [{"id": "n1"}]},
+            {"results": [{"id": "n2"}]},
+        ]
+        memory.vector_store.get.return_value = SimpleNamespace(
+            payload={"data": "碎记忆", "user_id": "u1"}
+        )
+        client = self._apply_client(mocker, db, row, memory)
+
+        resp = client.post("/memory/refine/apply", json={"candidate_id": 1})
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "applied"
+        assert resp.json()["refined_memory_ids"] == ["n1", "n2"]
+        assert memory.add.call_count == 2
+        for call in memory.add.call_args_list:
+            assert call.kwargs["infer"] is False
+            assert call.kwargs["user_id"] == "u1"
+        upd = memory.vector_store.update.call_args.kwargs
+        assert upd["payload"]["superseded_by"] == "n1"
+        assert "superseded_at" in upd["payload"]
+        assert upd["payload"]["data"] == "碎记忆"
+        assert row.status == "applied"
+        assert row.refined_memory_ids == ["n1", "n2"]
+        db.commit.assert_called()
+
+    def test_apply_rejects_non_proposed(self, mocker):
+        db = MagicMock()
+        row = _candidate_row(status="applied")
+        memory = MagicMock()
+        client = self._apply_client(mocker, db, row, memory)
+
+        resp = client.post("/memory/refine/apply", json={"candidate_id": 1})
+
+        assert resp.status_code == 409
+        memory.add.assert_not_called()
+        memory.vector_store.update.assert_not_called()
+
+    def test_apply_add_failure_leaves_proposed(self, mocker):
+        db = MagicMock()
+        row = _candidate_row(suggested_text=["摘要"], memory_ids=["m1"])
+        memory = MagicMock()
+        memory.add.side_effect = TimeoutError("llm down")
+        client = self._apply_client(mocker, db, row, memory)
+
+        resp = client.post("/memory/refine/apply", json={"candidate_id": 1})
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "proposed"
+        assert row.status == "proposed"
+        memory.vector_store.update.assert_not_called()
+
+
+class TestRefineRollback:
+    def _rollback_client(self, mocker, db, row, memory):
+        db.get.return_value = row
+        mocker.patch.object(refine_router, "get_memory_instance", return_value=memory)
+        return _make_app(db)
+
+    def test_rollback_applied_deletes_new_and_restores_originals(self, mocker):
+        db = MagicMock()
+        row = _candidate_row(
+            status="applied",
+            memory_ids=["m1", "m2"],
+            refined_memory_ids=["n1", "n2"],
+        )
+        memory = MagicMock()
+        memory.vector_store.get.return_value = SimpleNamespace(
+            payload={"data": "碎记忆", "user_id": "u1", "superseded_by": "n1", "superseded_at": "2026-01-01"}
+        )
+        client = self._rollback_client(mocker, db, row, memory)
+
+        resp = client.post("/memory/refine/rollback", json={"candidate_id": 1})
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "rolled_back"
+        memory.delete.assert_any_call("n1")
+        memory.delete.assert_any_call("n2")
+        upd = memory.vector_store.update.call_args.kwargs
+        assert "superseded_by" not in upd["payload"]
+        assert "superseded_at" not in upd["payload"]
+        assert upd["payload"]["data"] == "碎记忆"
+        assert row.status == "rolled_back"
+
+    def test_rollback_rejects_non_applied(self, mocker):
+        db = MagicMock()
+        row = _candidate_row(status="proposed")
+        memory = MagicMock()
+        client = self._rollback_client(mocker, db, row, memory)
+
+        resp = client.post("/memory/refine/rollback", json={"candidate_id": 1})
+
+        assert resp.status_code == 409
+        memory.delete.assert_not_called()
+
+
+class TestRefineHistory:
+    def test_history_lists_applied_and_rolled_back(self, mocker):
+        db = MagicMock()
+        r1 = _candidate_row(status="applied", suggested_text=["s"], refined_memory_ids=["n1"])
+        r2 = _candidate_row(status="rolled_back", suggested_text=["s2"])
+        r1.id, r2.id = 1, 2
+        db.execute.return_value.scalars.return_value.all.return_value = [r1, r2]
+        client = _make_app(db)
+
+        resp = client.get("/memory/refine/history", params={"user_id": "u1"})
+
+        assert resp.status_code == 200
+        hist = resp.json()["history"]
+        assert [h["status"] for h in hist] == ["applied", "rolled_back"]
+        assert hist[0]["refined_memory_ids"] == ["n1"]
+        assert hist[0]["suggested_text"] == ["s"]
+
+
+class TestRefineAuth:
+    @pytest.mark.parametrize(
+        "method,path,body",
+        [
+            ("POST", "/memory/refine/apply", {"candidate_id": 1}),
+            ("POST", "/memory/refine/rollback", {"candidate_id": 1}),
+            ("GET", "/memory/refine/history", None),
+        ],
+    )
+    def test_apply_rollback_history_require_auth(self, mocker, method, path, body):
+        import auth as auth_mod
+
+        mocker.patch.object(auth_mod, "AUTH_DISABLED", False)
+        db = MagicMock()
+        client = _make_app(db, override_auth=False)
+
+        if method == "GET":
+            resp = client.get(path)
+        else:
+            resp = client.post(path, json=body)
+
+        assert resp.status_code == 401
+
+
+class TestRefineCronScript:
+    def test_refine_candidates_script_discover_only(self, mocker, tmp_path, monkeypatch):
+        config = {
+            "vector_store": {"provider": "pgvector", "config": {}},
+            "llm": {"provider": "openai", "config": {}},
+            "embedder": {"provider": "openai", "config": {}},
+        }
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(config))
+        monkeypatch.setenv("MEM0_CONFIG_PATH", str(config_path))
+
+        fake_memory = MagicMock()
+        fake_memory.vector_store.list.return_value = [
+            [SimpleNamespace(id="u-row", payload={"user_id": "u1", "data": "x"})]
+        ]
+        fake_memory.vector_store.get.side_effect = lambda mid: SimpleNamespace(
+            payload={"data": f"碎记忆{mid}", "user_id": "u1"}
+        )
+        fake_memory.embedding_model.embed_batch.return_value = [
+            [1, 0, 0], [0.9, 0.43589, 0], [0.95, 0.31225, 0]
+        ]
+        fake_memory.llm.generate_response.return_value = json.dumps(
+            {"summary": ["摘要"]}, ensure_ascii=False
+        )
+        mocker.patch("mem0.Memory.from_config", return_value=fake_memory)
+
+        db = MagicMock()
+        db.execute.return_value.all.return_value = [("m1",), ("m2",), ("m3",)]
+        db_ctx = MagicMock()
+        db_ctx.__enter__.return_value = db
+        db_ctx.__exit__.return_value = False
+        mocker.patch.object(refine_candidates, "SessionLocal", return_value=db_ctx)
+
+        rc = refine_candidates.main()
+
+        assert rc == 0
+        fake_memory.add.assert_not_called()
+        db.commit.assert_called()

@@ -142,6 +142,7 @@ class MemoryRefineCandidate(Base):
     status: Mapped[str] = mapped_column(String(32), default="proposed")
     suggested_text: Mapped[list | None] = mapped_column(JSON, nullable=True)
     refined_memory_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    refined_memory_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
