@@ -42,6 +42,25 @@ class TestBackfillMemoryTypes:
         assert (scanned, pending, updated) == (1, 0, 0)
         memory.vector_store.update.assert_not_called()
 
+    def test_force_reclassifies_existing_valid_type(self):
+        rows = [_row("m1", {"data": "服务器在 192.0.2.163", "user_id": "hermes-user", "memory_type": "EXPERIENCES"})]
+        memory = _memory(rows)
+
+        scanned, pending, updated, dist, by_user = bf.backfill_memories(memory, rows, force=True)
+
+        assert (pending, updated) == (1, 1)
+        assert dist == {"FACTS": 1}
+        memory.vector_store.update.assert_called_once()
+
+    def test_force_with_dry_run_only_reports(self):
+        rows = [_row("m1", {"data": "服务器在 192.0.2.163", "user_id": "hermes-user", "memory_type": "EXPERIENCES"})]
+        memory = _memory(rows)
+
+        scanned, pending, updated, dist, by_user = bf.backfill_memories(memory, rows, force=True, dry_run=True)
+
+        assert (pending, updated) == (1, 0)
+        memory.vector_store.update.assert_not_called()
+
     def test_missing_type_backfilled_with_merged_payload(self):
         old = {"data": "服务器部署在 192.0.2.163", "user_id": "hermes-user", "created_at": "2026-01-01"}
         rows = [_row("m1", old)]

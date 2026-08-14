@@ -16,9 +16,12 @@ Environment:
   PRUNE_DRY_RUN     — "true" to only report without writing (DRY_RUN)
   --use-llm         — CLI flag: LLM-classify pending memories, falling back
                       to keyword rules on any LLM/parse failure (default off)
+  --force           — CLI flag: ignore existing valid memory_type and
+                      reclassify everything (with --use-llm that is a full LLM
+                      re-classification pass)
 
 Usage (same as dedup_memories.py, inside the container):
-  python3 scripts/backfill_memory_types.py [--use-llm]
+  python3 scripts/backfill_memory_types.py [--use-llm] [--force]
 """
 
 import json
@@ -82,9 +85,11 @@ def _llm_classify(memory, text: str) -> Optional[str]:
     return memory_type if memory_type in VALID_MEMORY_TYPES else None
 
 
-def backfill_memories(memory, rows: list, use_llm: bool = False, dry_run: bool = False):
+def backfill_memories(memory, rows: list, use_llm: bool = False, dry_run: bool = False, force: bool = False):
     """Classify and backfill memory_type on every row missing a valid one.
 
+    ``force=True`` ignores existing valid types and reclassifies everything
+    (combined with ``--use-llm`` that is a full LLM re-classification pass).
     Returns (scanned, pending, updated, type_distribution, per_user_pending).
     vector_store.update's payload is full-overwrite: always sends the merged
     {**old_payload, "memory_type": t}.
@@ -98,7 +103,7 @@ def backfill_memories(memory, rows: list, use_llm: bool = False, dry_run: bool =
         mem_id = getattr(row, "id", None)
         payload = getattr(row, "payload", None) or {}
         scanned += 1
-        if payload.get("memory_type") in VALID_MEMORY_TYPES:
+        if not force and payload.get("memory_type") in VALID_MEMORY_TYPES:
             continue  # already backfilled / valid — idempotent skip
         pending += 1
         text = payload.get("data") or payload.get("text") or ""
@@ -120,6 +125,7 @@ def main() -> int:
     config_path = os.environ.get("MEM0_CONFIG_PATH", "/app/config.json")
     dry_run = os.environ.get("PRUNE_DRY_RUN", "").lower() == "true"
     use_llm = "--use-llm" in sys.argv[1:]
+    force = "--force" in sys.argv[1:]
 
     if not os.path.exists(config_path):
         logger.error("config not found: %s", config_path)
@@ -139,7 +145,7 @@ def main() -> int:
     rows = _list_rows(memory)
     user_ids = discover_users(memory)
     scanned, pending, updated, distribution, per_user = backfill_memories(
-        memory, rows, use_llm=use_llm, dry_run=dry_run
+        memory, rows, use_llm=use_llm, dry_run=dry_run, force=force
     )
     elapsed = time.monotonic() - start
 

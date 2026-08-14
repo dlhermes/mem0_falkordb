@@ -105,25 +105,44 @@ DELETE_ALL_BATCH_SIZE = 1000
 
 VALID_MEMORY_TYPES = ("FACTS", "PREFERENCES", "EXPERIENCES", "OBSERVATIONS", "DECISIONS")
 
-MEMORY_TYPE_KEYWORDS = {
-    "PREFERENCES": ["喜欢", "偏好", "讨厌", "想要", "希望", "不喜欢", "爱吃", "爱用", "欣赏"],
-    "EXPERIENCES": ["踩坑", "报错", "错误", "修复", "教训", "步骤", "流程", "配置", "解决", "遇到", "试了", "经历"],
-    "OBSERVATIONS": ["观察到", "发现", "看到", "注意到", "观察"],
+# Keyword fallback for memory_type is two-tiered to defend against document-like
+# long texts: "发现/配置/步骤/流程/偏好" etc. are ordinary prose words that
+# appear in descriptions/evaluations/concepts and would misclassify them. Strong
+# keywords are unmistakable signals (踩坑/喜欢/决定...) and match at any length;
+# weak keywords only apply to short texts (<= LONG_TEXT_CUTOFF chars).
+MEMORY_TYPE_STRONG_KEYWORDS = {
+    "PREFERENCES": ["喜欢", "讨厌", "想要", "希望", "不爱", "爱吃", "爱用", "欣赏"],
+    "EXPERIENCES": ["踩坑", "报错", "修复", "教训", "试了"],
+    "OBSERVATIONS": ["观察到", "注意到"],
     "DECISIONS": ["决定", "决策", "拍板", "定了", "选型", "采用", "约定"],
 }
+
+MEMORY_TYPE_WEAK_KEYWORDS = {
+    "PREFERENCES": ["偏好"],
+    "EXPERIENCES": ["错误", "步骤", "流程", "配置", "遇到", "经历"],
+    "OBSERVATIONS": ["看到", "发现", "观察"],
+}
+
+LONG_TEXT_CUTOFF = 100
 
 
 def classify_memory_type(text, llm_type=None):
     """Classify a memory text into one of the 5 memory types.
 
     An LLM-provided type wins when it is a valid enum value; otherwise keyword
-    matching on the text applies (first hit wins), defaulting to FACTS.
+    matching applies in PREFERENCES -> EXPERIENCES -> OBSERVATIONS -> DECISIONS
+    order (first hit wins), defaulting to FACTS. Long texts (> 100 chars) only
+    match strong keywords, so prose containing "发现/配置/步骤" etc. falls back
+    to FACTS instead of being misclassified.
     """
     if llm_type in VALID_MEMORY_TYPES:
         return llm_type
     if text:
-        for memory_type, keywords in MEMORY_TYPE_KEYWORDS.items():
-            if any(kw in text for kw in keywords):
+        long_text = len(text) > LONG_TEXT_CUTOFF
+        for memory_type, strong in MEMORY_TYPE_STRONG_KEYWORDS.items():
+            if any(kw in text for kw in strong):
+                return memory_type
+            if not long_text and any(kw in text for kw in MEMORY_TYPE_WEAK_KEYWORDS.get(memory_type, [])):
                 return memory_type
     return "FACTS"
 

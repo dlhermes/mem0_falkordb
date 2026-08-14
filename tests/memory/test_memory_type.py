@@ -75,6 +75,34 @@ class TestClassifyMemoryType:
         assert classify_memory_type("") == "FACTS"
         assert classify_memory_type("数据库当前 11 条记忆") == "FACTS"
 
+    def test_short_text_weak_word_classifies(self):
+        from mem0.memory.main import classify_memory_type
+
+        assert classify_memory_type("发现服务延迟升高") == "OBSERVATIONS"
+        assert classify_memory_type("配置了 MEM0_RERANK_SCORE_THRESHOLD") == "EXPERIENCES"
+
+    def test_long_text_weak_word_defaults_to_facts(self):
+        from mem0.memory.main import classify_memory_type
+
+        long_doc = (
+            "本方案旨在解决大规模分布式系统部署与运维的工程问题，覆盖容器编排、存储、网络、"
+            "安全多个维度；在实施过程中发现若干配置与监控盲区，并通过自动化与文档沉淀形成"
+            "可复用的实践流程，最终产出完整的评估报告供团队参考。"
+        )
+        assert len(long_doc) > 100
+        assert classify_memory_type(long_doc) == "FACTS"
+
+    def test_long_text_with_strong_word_still_classifies(self):
+        from mem0.memory.main import classify_memory_type
+
+        long_doc = (
+            "在部署过程中踩坑无数次：先是 pgvector 维度不匹配导致建表失败，接着图存储连接"
+            "超时，最后通过逐项排查与索引重建解决了问题，整个过程耗时两天并记录了完整的排查日志，"
+            "后续同类问题可以直接参考这套处置流程。"
+        )
+        assert len(long_doc) > 100
+        assert classify_memory_type(long_doc) == "EXPERIENCES"
+
     def test_valid_llm_type_passthrough(self):
         from mem0.memory.main import classify_memory_type
 
