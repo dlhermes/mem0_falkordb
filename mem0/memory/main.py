@@ -103,6 +103,30 @@ def _vector_store_list_rows(listed):
 
 DELETE_ALL_BATCH_SIZE = 1000
 
+VALID_MEMORY_TYPES = ("FACTS", "PREFERENCES", "EXPERIENCES", "OBSERVATIONS", "DECISIONS")
+
+MEMORY_TYPE_KEYWORDS = {
+    "PREFERENCES": ["喜欢", "偏好", "讨厌", "想要", "希望", "不喜欢", "爱吃", "爱用", "欣赏"],
+    "EXPERIENCES": ["踩坑", "报错", "错误", "修复", "教训", "步骤", "流程", "配置", "解决", "遇到", "试了", "经历"],
+    "OBSERVATIONS": ["观察到", "发现", "看到", "注意到", "观察"],
+    "DECISIONS": ["决定", "决策", "拍板", "定了", "选型", "采用", "约定"],
+}
+
+
+def classify_memory_type(text, llm_type=None):
+    """Classify a memory text into one of the 5 memory types.
+
+    An LLM-provided type wins when it is a valid enum value; otherwise keyword
+    matching on the text applies (first hit wins), defaulting to FACTS.
+    """
+    if llm_type in VALID_MEMORY_TYPES:
+        return llm_type
+    if text:
+        for memory_type, keywords in MEMORY_TYPE_KEYWORDS.items():
+            if any(kw in text for kw in keywords):
+                return memory_type
+    return "FACTS"
+
 
 def _existing_hashes_from_store(vector_store, filters):
     """Full-scan hash dedup fallback: all payload hashes in the store scoped to `filters`.
@@ -1452,6 +1476,20 @@ class Memory(MemoryBase):
             )
         extracted_memories = _normalized
 
+        # Phase 2.7: Memory type keyword fallback (when LLM didn't output memory_type).
+        # Runs post-normalization so bare-string entries are covered too.
+        for mem in extracted_memories:
+            if not isinstance(mem, dict):
+                continue
+            meta = mem.get("metadata")
+            if meta and meta.get("memory_type") in VALID_MEMORY_TYPES:
+                continue  # LLM already set a valid memory_type, skip fallback
+            memory_type = classify_memory_type(mem.get("text") or "")
+            if meta is None:
+                mem["metadata"] = {"memory_type": memory_type}
+            else:
+                meta["memory_type"] = memory_type
+
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
         logger.info("add Phase 3: extracted_memories=%d, batch embed starting", len(mem_texts))
@@ -1533,7 +1571,7 @@ class Memory(MemoryBase):
 
             # Merge temporal metadata from LLM extraction
             llm_meta = mem.get("metadata") or {}
-            for k in ("temporal", "temporal_date", "importance", "lane"):
+            for k in ("temporal", "temporal_date", "importance", "lane", "memory_type"):
                 if k in llm_meta:
                     mem_metadata[k] = llm_meta[k]
 
@@ -1561,7 +1599,7 @@ class Memory(MemoryBase):
             mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
             mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
             mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
-            for k in ("temporal", "temporal_date", "importance", "lane"):
+            for k in ("temporal", "temporal_date", "importance", "lane", "memory_type"):
                 if k in update_meta_by_id.get(real_id, {}):
                     mem_metadata_update[k] = update_meta_by_id[real_id][k]
             update_records.append((real_id, merged_text, merged_embedding, mem_metadata_update))
@@ -3724,6 +3762,20 @@ class AsyncMemory(MemoryBase):
             )
         extracted_memories = _normalized
 
+        # Phase 2.7: Memory type keyword fallback (when LLM didn't output memory_type).
+        # Runs post-normalization so bare-string entries are covered too.
+        for mem in extracted_memories:
+            if not isinstance(mem, dict):
+                continue
+            meta = mem.get("metadata")
+            if meta and meta.get("memory_type") in VALID_MEMORY_TYPES:
+                continue  # LLM already set a valid memory_type, skip fallback
+            memory_type = classify_memory_type(mem.get("text") or "")
+            if meta is None:
+                mem["metadata"] = {"memory_type": memory_type}
+            else:
+                meta["memory_type"] = memory_type
+
         # Phase 3: Batch embed all extracted memory texts
         mem_texts = [m.get("text", "") for m in extracted_memories if m.get("text")]
         try:
@@ -3801,7 +3853,7 @@ class AsyncMemory(MemoryBase):
 
             # Merge temporal metadata from LLM extraction
             llm_meta = mem.get("metadata") or {}
-            for k in ("temporal", "temporal_date", "importance", "lane"):
+            for k in ("temporal", "temporal_date", "importance", "lane", "memory_type"):
                 if k in llm_meta:
                     mem_metadata[k] = llm_meta[k]
 
@@ -3830,7 +3882,7 @@ class AsyncMemory(MemoryBase):
             mem_metadata_update["hash"] = hashlib.md5(merged_text.encode()).hexdigest()
             mem_metadata_update["created_at"] = datetime.now(timezone.utc).isoformat()
             mem_metadata_update["updated_at"] = datetime.now(timezone.utc).isoformat()
-            for k in ("temporal", "temporal_date", "importance", "lane"):
+            for k in ("temporal", "temporal_date", "importance", "lane", "memory_type"):
                 if k in update_meta_by_id.get(real_id, {}):
                     mem_metadata_update[k] = update_meta_by_id[real_id][k]
             update_records.append((real_id, merged_text, merged_embedding, mem_metadata_update))
