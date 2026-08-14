@@ -62,6 +62,34 @@ const TYPE_FILTERS = [
   { value: "generic", label: "通用" },
 ] as const;
 
+const MEMORY_TYPE_FILTERS = [
+  { value: "all", label: "全部类型" },
+  { value: "FACTS", label: "客观事实" },
+  { value: "PREFERENCES", label: "偏好" },
+  { value: "EXPERIENCES", label: "经历" },
+  { value: "OBSERVATIONS", label: "观察" },
+  { value: "DECISIONS", label: "决策" },
+] as const;
+
+const MEMORY_TYPE_LABELS: Record<string, string> = {
+  FACTS: "客观事实",
+  PREFERENCES: "偏好",
+  EXPERIENCES: "经历",
+  OBSERVATIONS: "观察",
+  DECISIONS: "决策",
+};
+
+const MEMORY_TYPE_VARIANTS: Record<
+  string,
+  "violet" | "pink" | "lime" | "success" | "warning"
+> = {
+  FACTS: "violet",
+  PREFERENCES: "pink",
+  EXPERIENCES: "lime",
+  OBSERVATIONS: "success",
+  DECISIONS: "warning",
+};
+
 const TIME_FILTERS = [
   { value: "all", label: "全部时间" },
   { value: "7", label: "近 7 天" },
@@ -98,6 +126,7 @@ function MemoriesContent() {
   const searchId = searchParams.get("search");
   const [userId, setUserId] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [memoryTypeFilter, setMemoryTypeFilter] = useState<string>("all");
   const [timeFilter, setTimeFilter] = useState<string>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
@@ -122,6 +151,7 @@ function MemoriesContent() {
           limit: SEARCH_LIMIT,
         };
         if (userId.trim()) params.user_id = userId.trim();
+        if (memoryTypeFilter !== "all") params.memory_type = memoryTypeFilter;
         const res = await api.get(MEMORY_ENDPOINTS.SEARCH, { params });
         const raw = res.data?.results ?? [];
         return Array.isArray(raw) ? raw : [];
@@ -143,7 +173,7 @@ function MemoriesContent() {
       return;
     }
     void refetch();
-  }, [qq, refetch]);
+  }, [qq, memoryTypeFilter, refetch]);
 
   useEffect(() => {
     if (!searchId) return;
@@ -192,6 +222,13 @@ function MemoriesContent() {
             : "generic";
         if (type !== typeFilter) return false;
       }
+      if (memoryTypeFilter !== "all") {
+        const mt =
+          m.memory_type ??
+          (m as Memory & { metadata?: { memory_type?: string } }).metadata
+            ?.memory_type;
+        if (mt !== memoryTypeFilter) return false;
+      }
       if (timeFilter !== "all" && m.created_at) {
         const days = Number(timeFilter);
         const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -199,7 +236,7 @@ function MemoriesContent() {
       }
       return true;
     });
-  }, [memories, hasQuery, typeFilter, timeFilter]);
+  }, [memories, hasQuery, typeFilter, memoryTypeFilter, timeFilter]);
 
   const totalPages = Math.ceil(filteredMemories.length / PAGE_SIZE);
   const paginatedMemories = filteredMemories.slice(
@@ -317,13 +354,25 @@ function MemoriesContent() {
     },
   ];
 
+  const typeBadge = (mt?: string) => {
+    if (!mt || !MEMORY_TYPE_LABELS[mt]) return null;
+    return (
+      <Badge variant={MEMORY_TYPE_VARIANTS[mt]} className="shrink-0">
+        {MEMORY_TYPE_LABELS[mt]}
+      </Badge>
+    );
+  };
+
   const searchColumns = [
     {
       key: "memory" as keyof Memory,
       label: "内容",
       width: 400,
-      render: (value: string) => (
-        <span className="line-clamp-2 text-sm">{value}</span>
+      render: (value: string, row: Memory) => (
+        <div className="flex items-start gap-2">
+          <span className="line-clamp-2 flex-1 text-sm">{value}</span>
+          {typeBadge(row.memory_type)}
+        </div>
       ),
     },
     { key: "user_id" as keyof Memory, label: "用户", width: 100 },
@@ -409,6 +458,24 @@ function MemoriesContent() {
               </SelectTrigger>
               <SelectContent>
                 {TYPE_FILTERS.map((f) => (
+                  <SelectItem key={f.value} value={f.value}>
+                    {f.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={memoryTypeFilter}
+              onValueChange={(v) => {
+                setMemoryTypeFilter(v);
+                setPage(0);
+              }}
+            >
+              <SelectTrigger variant="dropdown" className="w-40">
+                <SelectValue placeholder="全部类型" />
+              </SelectTrigger>
+              <SelectContent>
+                {MEMORY_TYPE_FILTERS.map((f) => (
                   <SelectItem key={f.value} value={f.value}>
                     {f.label}
                   </SelectItem>
@@ -580,6 +647,14 @@ function MemoriesContent() {
                       代理
                     </Label>
                     <p className="text-sm">{selectedMemory.agent_id}</p>
+                  </div>
+                )}
+                {selectedMemory.memory_type && (
+                  <div className="space-y-1">
+                    <Label className="text-xs text-onSurface-default-tertiary">
+                      类型
+                    </Label>
+                    <div>{typeBadge(selectedMemory.memory_type)}</div>
                   </div>
                 )}
                 {selectedMemory.created_at && (

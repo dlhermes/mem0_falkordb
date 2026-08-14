@@ -5,10 +5,20 @@ export interface Memory {
   agent_id?: string;
   created_at?: string;
   updated_at?: string;
+  memory_type?: string;
 }
 
 export interface MemorySearchResult extends Memory {
   score?: number;
+}
+
+export interface MemoryTypeDistributionItem {
+  type: string;
+  count: number;
+}
+
+export interface MemoryTypeDistribution {
+  distribution: MemoryTypeDistributionItem[];
 }
 
 export interface MemoryHistoryEntry {

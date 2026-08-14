@@ -29,6 +29,7 @@ def search_memories(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     user_id: Optional[str] = None,
+    memory_type: Optional[str] = None,
     _auth=Depends(require_auth),
     db: Session = Depends(get_db),
 ):
@@ -51,6 +52,9 @@ def search_memories(
     if user_id is not None:
         where.append("payload->>'user_id' = :uid")
         params["uid"] = user_id
+    if memory_type:
+        where.append("payload->>'memory_type' = :mt")
+        params["mt"] = memory_type
     where_sql = " AND ".join(where)
     collection = _get_collection()
 
@@ -74,6 +78,23 @@ def search_memories(
                 "agent_id": payload.get("agent_id"),
                 "created_at": payload.get("created_at"),
                 "updated_at": payload.get("updated_at"),
+                "memory_type": payload.get("memory_type"),
             }
         )
     return {"results": results, "total": total}
+
+
+@router.get("/types-distribution")
+def memories_types_distribution(
+    _auth=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Count memories grouped by memory_type, unclassified included."""
+    collection = _get_collection()
+    sql = (
+        f"SELECT COALESCE(payload->>'memory_type', 'unclassified') AS mt, count(*) "
+        f"FROM {collection} GROUP BY 1 ORDER BY 2 DESC"
+    )
+    rows = db.execute(text(sql)).all()
+    distribution = [{"type": str(row[0]), "count": row[1]} for row in rows]
+    return {"distribution": distribution}

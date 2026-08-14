@@ -11,6 +11,7 @@ export const AUTH_ENDPOINTS = {
 export const MEMORY_ENDPOINTS = {
   BASE: "/memories",
   SEARCH: "/memories/search",
+  TYPES_DISTRIBUTION: "/memories/types-distribution",
   BY_ID: (memoryId: string) => `/memories/${memoryId}`,
   HISTORY: (memoryId: string) => `/memories/${memoryId}/history`,
   CONFIGURE: "/configure",

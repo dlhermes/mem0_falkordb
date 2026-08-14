@@ -34,8 +34,27 @@ import type {
   EvolveIdleMemory,
   EvolveReport,
   Memory,
+  MemoryTypeDistribution,
   RecallStageStat,
 } from "@/types/api";
+
+const MEMORY_TYPE_LABELS: Record<string, string> = {
+  FACTS: "客观事实",
+  PREFERENCES: "偏好",
+  EXPERIENCES: "经历",
+  OBSERVATIONS: "观察",
+  DECISIONS: "决策",
+  unclassified: "未分类",
+};
+
+const MEMORY_TYPE_BAR_CLASS: Record<string, string> = {
+  FACTS: "bg-sentry-violet",
+  PREFERENCES: "bg-sentry-pink",
+  EXPERIENCES: "bg-sentry-lime",
+  OBSERVATIONS: "bg-sentry-success",
+  DECISIONS: "bg-sentry-warning",
+  unclassified: "bg-surface-default-fg-secondary",
+};
 
 const EMPTY_REPORT: EvolveReport = {
   search_quality: { windows: {}, daily_trend: [], top_zero_hits: [] },
@@ -449,6 +468,24 @@ export default function AnalyticsPage() {
     { errorToast: "加载分析数据失败", initialData: EMPTY_REPORT },
   );
 
+  const { data: typeDist = { distribution: [] } } = useApiQuery<MemoryTypeDistribution>(
+    async () => {
+      const res = await api.get<MemoryTypeDistribution>(MEMORY_ENDPOINTS.TYPES_DISTRIBUTION);
+      return res.data;
+    },
+    { errorToast: "加载记忆构成失败", initialData: { distribution: [] } },
+  );
+
+  const totalMemories = typeDist.distribution.reduce((s, d) => s + (d.count ?? 0), 0);
+  const typeItems = typeDist.distribution.map((d) => {
+    const pct = totalMemories > 0 ? ((d.count / totalMemories) * 100).toFixed(1) : "0.0";
+    return {
+      label: `${MEMORY_TYPE_LABELS[d.type] ?? d.type} · ${pct}%`,
+      value: d.count,
+      barClass: MEMORY_TYPE_BAR_CLASS[d.type] ?? "bg-sentry-violet",
+    };
+  });
+
   const { search_quality, feedback, heat, operations, recall } = report;
 
   const searchRows = Object.entries(search_quality.windows).map(
@@ -653,6 +690,19 @@ export default function AnalyticsPage() {
         </div>
       ) : (
         <>
+          <Panel
+            title="记忆构成"
+            description="按 memory_type 分类的记忆数量与占比。"
+          >
+            <Section title="类型分布">
+              {typeItems.length > 0 ? (
+                <DistributionBars items={typeItems} />
+              ) : (
+                <NoData />
+              )}
+            </Section>
+          </Panel>
+
           <Panel
             title="搜索质量"
             description="过去 7/30 天的查询量、零命中率、平均分与延迟。"
