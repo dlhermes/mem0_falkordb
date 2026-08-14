@@ -361,6 +361,13 @@ class TestPGVector(unittest.TestCase):
         self.assertEqual(data_arg[0][0], self.test_ids[0])
         self.assertEqual(data_arg[1][0], self.test_ids[1])
 
+        # Upsert semantics: duplicate id must overwrite, not crash (no data loss).
+        sql_arg = call_args[0][0]
+        self.assertIn(
+            "ON CONFLICT (id) DO UPDATE SET vector = EXCLUDED.vector, payload = EXCLUDED.payload",
+            str(sql_arg),
+        )
+
     @patch('mem0.vector_stores.pgvector.PSYCOPG_VERSION', 2)
     @patch('mem0.vector_stores.pgvector.ConnectionPool')
     @patch.object(PGVector, '_get_cursor')
@@ -424,8 +431,10 @@ class TestPGVector(unittest.TestCase):
             mock_execute_values.assert_called_once()
             call_args = mock_execute_values.call_args
 
+            # Upsert semantics: duplicate id must overwrite, not crash (no data loss).
             mock_psycopg2.sql.SQL.assert_any_call(
-                "INSERT INTO {} (id, vector, payload) VALUES %s"
+                "INSERT INTO {} (id, vector, payload) VALUES %s "
+                "ON CONFLICT (id) DO UPDATE SET vector = EXCLUDED.vector, payload = EXCLUDED.payload"
             )
 
             # The data argument should be a list of tuples, one per vector

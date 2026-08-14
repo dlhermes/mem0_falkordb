@@ -383,14 +383,20 @@ class PGVector(VectorStoreBase):
         if PSYCOPG_VERSION == 3:
             with self._get_cursor(commit=True) as cur:
                 cur.executemany(
-                    sql.SQL("INSERT INTO {} (id, vector, payload) VALUES (%s, %s, %s)").format(self._col()),
+                    sql.SQL(
+                        "INSERT INTO {} (id, vector, payload) VALUES (%s, %s, %s) "
+                        "ON CONFLICT (id) DO UPDATE SET vector = EXCLUDED.vector, payload = EXCLUDED.payload"
+                    ).format(self._col()),
                     data,
                 )
         else:
             with self._get_cursor(commit=True) as cur:
                 execute_values(
                     cur,
-                    sql.SQL("INSERT INTO {} (id, vector, payload) VALUES %s").format(self._col()),
+                    sql.SQL(
+                        "INSERT INTO {} (id, vector, payload) VALUES %s "
+                        "ON CONFLICT (id) DO UPDATE SET vector = EXCLUDED.vector, payload = EXCLUDED.payload"
+                    ).format(self._col()),
                     data,
                 )
 
