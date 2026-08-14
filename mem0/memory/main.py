@@ -2218,7 +2218,10 @@ class Memory(MemoryBase):
             # pure-Chinese relation types the fragment text matches the query
             # semantically and should survive the rerank threshold.
             _graph_t0 = time.perf_counter()
-            if self.graph:
+            if self.graph and "memory_type" not in effective_filters:
+                # Type-filtered searches skip graph recall: synthesized
+                # "src 关系 dst" fragments carry no payload/memory_type and can't
+                # match a type filter.
                 try:
                     graph_future = self._graph_search_executor.submit(self.graph.search, query, effective_filters, limit)
                     graph_relations = graph_future.result(timeout=15)
@@ -4514,7 +4517,10 @@ class AsyncMemory(MemoryBase):
             # pure-Chinese relation types the fragment text matches the query
             # semantically and should survive the rerank threshold.
             _graph_t0 = time.perf_counter()
-            if self.graph:
+            if self.graph and "memory_type" not in effective_filters:
+                # Type-filtered searches skip graph recall: synthesized
+                # "src 关系 dst" fragments carry no payload/memory_type and can't
+                # match a type filter.
                 try:
                     loop = asyncio.get_running_loop()
                     graph_relations = await asyncio.wait_for(
