@@ -68,6 +68,7 @@ def score_and_rank(
     decay_fn: Optional[Callable[[Dict], float]] = None,
     salience_scores: Optional[Dict[str, Dict[str, float]]] = None,
     salience_rank_weight: float = 0.0,
+    type_weight_fn: Optional[Callable[[Dict], float]] = None,
     trace_stats: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Score candidates additively and return top-k results.
@@ -103,6 +104,10 @@ def score_and_rank(
             when non-empty.
         salience_rank_weight: Multiplicative weight for the salience boost;
             default 0 keeps ordering identical to current behavior.
+        type_weight_fn: Optional per-candidate multiplicative weight applied to
+            combined (after salience), receiving the full payload dict and
+            returning a float. None (default) disables it entirely — a weight
+            of 1.0 leaves ordering byte-for-byte identical to current behavior.
         trace_stats: Optional dict; when provided, RECALL funnel counts
             (threshold/decay/topk transitions) and latencies are written into
             it. None (default) disables all collection — zero behavior change.
@@ -185,6 +190,14 @@ def score_and_rank(
                 salience_boost = 1.0 + salience_rank_weight * heat_s
             combined = combined * salience_boost
 
+        # Memory-type weighting is an opt-in multiplicative boost on the final
+        # combined score (mirrors salience). None disables it; a weight of 1.0
+        # (or a payload without memory_type) leaves ordering unchanged.
+        type_weight = None
+        if type_weight_fn is not None:
+            type_weight = type_weight_fn(result.get("payload", {}))
+            combined = combined * type_weight
+
         scored_result = {
             "id": mem_id_str,
             "score": combined,
@@ -211,6 +224,8 @@ def score_and_rank(
                         "salience_boost": salience_boost,
                     }
                 )
+            if type_weight is not None:
+                score_details["type_weight"] = type_weight
             scored_result["score_details"] = score_details
         scored.append(scored_result)
         if trace_active:
@@ -228,6 +243,7 @@ def score_and_rank(
                 "threshold_latency_ms": _threshold_ms * 1000,
                 "decay_latency_ms": _decay_ms * 1000,
                 "scoring_latency_ms": (time.perf_counter() - _t0) * 1000,
+                "type_weights_enabled": type_weight_fn is not None,
             }
         )
     return scored[:top_k]

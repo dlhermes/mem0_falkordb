@@ -128,6 +128,36 @@ def classify_memory_type(text, llm_type=None):
     return "FACTS"
 
 
+MEMORY_TYPE_WEIGHT_ENV = {
+    "FACTS": "MEM0_TYPE_WEIGHT_FACTS",
+    "PREFERENCES": "MEM0_TYPE_WEIGHT_PREFERENCES",
+    "EXPERIENCES": "MEM0_TYPE_WEIGHT_EXPERIENCES",
+    "OBSERVATIONS": "MEM0_TYPE_WEIGHT_OBSERVATIONS",
+    "DECISIONS": "MEM0_TYPE_WEIGHT_DECISIONS",
+}
+
+
+def _build_type_weights() -> dict:
+    """Read per-type ranking weights from env; invalid values fall back to 1.0."""
+    weights = {}
+    for memory_type, env_key in MEMORY_TYPE_WEIGHT_ENV.items():
+        try:
+            weights[memory_type] = float(os.environ.get(env_key, "1.0"))
+        except ValueError:
+            weights[memory_type] = 1.0
+    return weights
+
+
+def _map_type_filter(filters):
+    """Alias the top-level \"type\" filter key to the payload field \"memory_type\"."""
+    if not filters:
+        return filters
+    mapped = dict(filters)
+    if "type" in mapped and isinstance(mapped["type"], str):
+        mapped["memory_type"] = mapped.pop("type")
+    return mapped
+
+
 def _existing_hashes_from_store(vector_store, filters):
     """Full-scan hash dedup fallback: all payload hashes in the store scoped to `filters`.
 
@@ -2070,7 +2100,7 @@ class Memory(MemoryBase):
         temporal_usage_notice = detect_temporal_usage_from_search(query, filters)
 
         # Validate and trim entity IDs in filters
-        effective_filters = filters.copy() if filters else {}
+        effective_filters = _map_type_filter(filters.copy() if filters else {})
         if "user_id" in effective_filters:
             effective_filters["user_id"] = _validate_and_trim_entity_id(
                 effective_filters["user_id"], "user_id"
@@ -2585,6 +2615,15 @@ class Memory(MemoryBase):
                 except Exception as e:
                     logger.warning(f"Salience rank lookup failed: {e}")
 
+        # Opt-in memory-type weight: MEM0_TYPE_WEIGHT_* > 1 multiplies combined
+        # by the candidate payload's memory_type weight. All 1.0 (default) =
+        # no fn, ordering identical to current behavior.
+        _type_weight_fn = None
+        _type_weights = _build_type_weights()
+        if any(w != 1.0 for w in _type_weights.values()):
+            def _type_weight_fn(payload):
+                return _type_weights.get(payload.get("memory_type"), 1.0)
+
         scored_results = score_and_rank(
             semantic_results=candidates,
             bm25_scores=bm25_scores,
@@ -2595,6 +2634,7 @@ class Memory(MemoryBase):
             decay_fn=_decay_fn,
             salience_scores=_salience_scores,
             salience_rank_weight=_rank_weight,
+            type_weight_fn=_type_weight_fn,
             trace_stats=trace_stats,
         )
 
@@ -4354,7 +4394,7 @@ class AsyncMemory(MemoryBase):
         temporal_usage_notice = detect_temporal_usage_from_search(query, filters)
 
         # Validate and trim entity IDs in filters
-        effective_filters = filters.copy() if filters else {}
+        effective_filters = _map_type_filter(filters.copy() if filters else {})
         if "user_id" in effective_filters:
             effective_filters["user_id"] = _validate_and_trim_entity_id(
                 effective_filters["user_id"], "user_id"
@@ -4886,6 +4926,15 @@ class AsyncMemory(MemoryBase):
                 except Exception as e:
                     logger.warning(f"Salience rank lookup failed: {e}")
 
+        # Opt-in memory-type weight: MEM0_TYPE_WEIGHT_* > 1 multiplies combined
+        # by the candidate payload's memory_type weight. All 1.0 (default) =
+        # no fn, ordering identical to current behavior.
+        _type_weight_fn = None
+        _type_weights = _build_type_weights()
+        if any(w != 1.0 for w in _type_weights.values()):
+            def _type_weight_fn(payload):
+                return _type_weights.get(payload.get("memory_type"), 1.0)
+
         scored_results = score_and_rank(
             semantic_results=candidates,
             bm25_scores=bm25_scores,
@@ -4896,6 +4945,7 @@ class AsyncMemory(MemoryBase):
             decay_fn=_decay_fn,
             salience_scores=_salience_scores,
             salience_rank_weight=_rank_weight,
+            type_weight_fn=_type_weight_fn,
             trace_stats=trace_stats,
         )
 
