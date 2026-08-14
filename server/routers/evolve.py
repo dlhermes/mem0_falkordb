@@ -12,10 +12,31 @@ from models import (
     RequestLog,
 )
 from pydantic import BaseModel
-from sqlalchemy import and_, case, func, or_, select
+from server_state import get_current_config
+from sqlalchemy import String, and_, case, column, func, or_, select, table
 from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/evolve", tags=["evolve"])
+
+
+def _collection_name() -> str:
+    config = get_current_config()
+    return (
+        config.get("vector_store", {}).get("config", {}).get("collection_name")
+        or "mem0_memories"
+    )
+
+
+def _memory_still_exists() -> "ColumnElement[bool]":
+    """EXISTS guard: salience row still has a live memory in the vector store.
+
+    mem0_memories.id is uuid while EvolveSalience.memory_id is varchar(255), so
+    the comparison must cast (id::text = memory_id), otherwise Postgres raises
+    ``operator does not exist: uuid = character varying``.
+    """
+    memories = table(_collection_name(), column("id"))
+    return EvolveSalience.memory_id.in_(select(func.cast(memories.c.id, String)))
+
 
 FeedbackType = Literal["useful", "useless", "correction"]
 DELTAS: dict[str, float] = {"useful": 0.1, "useless": -0.15, "correction": -0.05}
@@ -264,7 +285,8 @@ def evolve_report(
             or_(
                 EvolveSalience.last_access_at.is_(None),
                 EvolveSalience.last_access_at < cutoff(14),
-            )
+            ),
+            _memory_still_exists(),
         )
         .order_by(EvolveSalience.access_count.desc())
     ).all()

@@ -498,7 +498,14 @@ export default function AnalyticsPage() {
     { errorToast: "加载记忆构成失败", initialData: { distribution: [] } },
   );
 
-  const refineUserId = user?.id ? { user_id: user.id } : undefined;
+  // Admin sees all users' candidates/history (backend returns full scope when
+  // user_id is omitted); non-admin is scoped to their own id.
+  const refineUserId =
+    user?.role === "admin"
+      ? undefined
+      : user?.id
+        ? { user_id: user.id }
+        : undefined;
   const {
     data: refineData = { candidates: [], history: [] },
     refetch: refetchRefine,
@@ -1001,6 +1008,9 @@ export default function AnalyticsPage() {
                       </div>
                       <p className="text-xs text-onSurface-default-tertiary">
                         组内 {c.memory_ids.length} 条原记忆
+                        {c.user_id && c.user_id !== user?.id
+                          ? ` · user: ${c.user_id}`
+                          : ""}
                       </p>
                       <ul className="space-y-1">
                         {c.suggested_text.map((s, i) => (
@@ -1061,6 +1071,9 @@ export default function AnalyticsPage() {
                       </div>
                       <p className="text-xs text-onSurface-default-tertiary">
                         组内 {c.memory_ids.length} 条原记忆
+                        {c.user_id && c.user_id !== user?.id
+                          ? ` · user: ${c.user_id}`
+                          : ""}
                         {c.updated_at
                           ? ` · ${fmtDateTime(c.updated_at)}`
                           : ""}

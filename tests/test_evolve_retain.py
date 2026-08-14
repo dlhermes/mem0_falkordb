@@ -15,7 +15,7 @@ os.environ.setdefault("AUTH_DISABLED", "true")
 os.environ.setdefault("JWT_SECRET", "test-secret-for-evolve-retain")
 os.environ.setdefault("OPENAI_API_KEY", "test-key-not-used")
 
-from sqlalchemy import create_engine, select  # noqa: E402
+from sqlalchemy import create_engine, select, text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -66,6 +66,8 @@ def client():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE mem0_memories (id VARCHAR(36) PRIMARY KEY)"))
     TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
     app = server_main.app
@@ -86,7 +88,15 @@ def client():
 
     app.dependency_overrides[get_db] = override_get_db
 
-    return TestClient(app, raise_server_exceptions=False), TestingSessionLocal
+    from routers import evolve as evolve_router
+    from unittest.mock import patch
+
+    with patch.object(
+        evolve_router,
+        "get_current_config",
+        return_value={"vector_store": {"config": {"collection_name": "mem0_memories"}}},
+    ):
+        yield TestClient(app, raise_server_exceptions=False), TestingSessionLocal
 
 
 def _now():
@@ -119,6 +129,7 @@ def test_retain_updates_last_access_at(client):
 def test_retain_drops_memory_from_stale_report(client):
     old = _now() - timedelta(days=30)
     with client[1]() as db:
+        db.execute(text("INSERT INTO mem0_memories (id) VALUES ('m2')"))
         db.add(EvolveSalience(memory_id="m2", salience_score=1.0, access_count=1, last_access_at=old))
         db.commit()
 

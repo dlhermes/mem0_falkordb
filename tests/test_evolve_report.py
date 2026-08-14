@@ -32,6 +32,7 @@ from models import (  # noqa: E402
     RequestLog,
 )
 from routers import evolve as evolve_router  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 
 @pytest.fixture
@@ -42,6 +43,9 @@ def client():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
+    # mem0_memories is the pgvector collection table (not a SQLAlchemy model here).
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE mem0_memories (id VARCHAR(36) PRIMARY KEY)"))
     TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
     app = FastAPI()
@@ -57,7 +61,14 @@ def client():
 
     app.dependency_overrides[get_db] = override_get_db
 
-    return TestClient(app), TestingSessionLocal
+    from unittest.mock import patch
+
+    with patch.object(
+        evolve_router,
+        "get_current_config",
+        return_value={"vector_store": {"config": {"collection_name": "mem0_memories"}}},
+    ):
+        yield TestClient(app), TestingSessionLocal
 
 
 def _get(client, **params):
@@ -111,6 +122,7 @@ def test_seeded_data_populates_panels(client):
     d20 = now - timedelta(days=20)
 
     with client[1]() as db:
+        db.execute(text("INSERT INTO mem0_memories (id) VALUES ('cold'), ('never')"))
         db.add_all(
             [
                 EvolveQuery(query="qz", result_count=0, is_zero_hit=True, avg_score=None, latency_ms=40, created_at=h1),
@@ -222,6 +234,25 @@ def test_seeded_data_populates_panels(client):
         "avg_latency_ms": pytest.approx(75, abs=1e-4),
         "success_rate": pytest.approx(0.75),
     }
+
+
+def test_stale_excludes_orphan_salience(client):
+    """Salience rows whose memory no longer exists in the vector store are ghosts."""
+    now = _now()
+    with client[1]() as db:
+        db.execute(text("INSERT INTO mem0_memories (id) VALUES ('live')"))
+        db.add_all(
+            [
+                EvolveSalience(memory_id="live", salience_score=0.5, access_count=1, last_access_at=now - timedelta(days=20)),
+                EvolveSalience(memory_id="ghost", salience_score=0.5, access_count=1, last_access_at=now - timedelta(days=20)),
+            ]
+        )
+        db.commit()
+
+    stale_ids = {m["memory_id"] for m in _get(client).json()["heat"]["stale"]}
+
+    assert "live" in stale_ids
+    assert "ghost" not in stale_ids
 
 
 def test_days_param_narrows_windows(client):

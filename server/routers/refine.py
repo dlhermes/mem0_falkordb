@@ -88,6 +88,32 @@ def _collect_stale_items(memory, db: Session, user_id: str) -> list[dict]:
     return items
 
 
+def _resolve_scope(user_id: Optional[str], _auth) -> Optional[str]:
+    """Admin sees all unless user_id is explicit; non-admin scopes to self."""
+    if user_id:
+        return user_id
+    if getattr(_auth, "role", None) == "admin":
+        return None
+    return str(_auth.id)
+
+
+def _discover_users(memory) -> list[str]:
+    """Scan vector store payloads for unique user_ids (admin full-scope helper)."""
+    try:
+        results = memory.vector_store.list(top_k=10000)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("refine discover_users failed: %s", e)
+        return []
+    rows = results[0] if results and isinstance(results, list) and isinstance(results[0], list) else results or []
+    user_ids: set[str] = set()
+    for row in rows:
+        payload = getattr(row, "payload", None) or {}
+        uid = payload.get("user_id")
+        if uid:
+            user_ids.add(str(uid))
+    return sorted(user_ids)
+
+
 def discover_refine_candidates(memory, db: Session, user_id: str) -> list[dict]:
     """Shared core: stale discovery -> clustering -> LLM proposal -> candidate rows.
 
@@ -122,10 +148,20 @@ def generate_refine_candidates(
     _auth=Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """Discover fragmented-memory clusters and draft LLM refinement proposals."""
-    effective_user = user_id or str(_auth.id)
+    """Discover fragmented-memory clusters and draft LLM refinement proposals.
+
+    Admin without an explicit user_id generates candidates for ALL users;
+    otherwise scoped to the caller (or the requested user).
+    """
     memory = get_memory_instance()
-    created = discover_refine_candidates(memory, db, effective_user)
+    if user_id:
+        created = discover_refine_candidates(memory, db, user_id)
+    elif getattr(_auth, "role", None) == "admin":
+        created = []
+        for uid in _discover_users(memory):
+            created.extend(discover_refine_candidates(memory, db, uid))
+    else:
+        created = discover_refine_candidates(memory, db, str(_auth.id))
     return {"candidates": created}
 
 
@@ -247,14 +283,18 @@ def refine_history(
     _auth=Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """List applied / rolled_back candidates (with proposals and new ids)."""
+    """List applied / rolled_back candidates (with proposals and new ids).
+
+    Admin without an explicit user_id sees all users' history.
+    """
     stmt = (
         select(MemoryRefineCandidate)
         .where(MemoryRefineCandidate.status.in_(APPLIED_STATUSES))
         .order_by(MemoryRefineCandidate.updated_at.desc())
     )
-    if user_id:
-        stmt = stmt.where(MemoryRefineCandidate.user_id == user_id)
+    scope = _resolve_scope(user_id, _auth)
+    if scope:
+        stmt = stmt.where(MemoryRefineCandidate.user_id == scope)
     rows = db.execute(stmt).scalars().all()
     return {"history": [_serialize_candidate(r) for r in rows]}
 
@@ -266,10 +306,14 @@ def list_refine_candidates(
     _auth=Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """List refinement candidates, optionally filtered by status / user_id."""
+    """List refinement candidates, optionally filtered by status / user_id.
+
+    Admin without an explicit user_id sees all users' candidates.
+    """
     stmt = select(MemoryRefineCandidate).order_by(MemoryRefineCandidate.created_at.desc())
-    if user_id:
-        stmt = stmt.where(MemoryRefineCandidate.user_id == user_id)
+    scope = _resolve_scope(user_id, _auth)
+    if scope:
+        stmt = stmt.where(MemoryRefineCandidate.user_id == scope)
     if status:
         stmt = stmt.where(MemoryRefineCandidate.status == status)
     rows = db.execute(stmt).scalars().all()

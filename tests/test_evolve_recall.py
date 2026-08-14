@@ -18,7 +18,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key-not-used")
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -50,6 +50,8 @@ def client():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE mem0_memories (id VARCHAR(36) PRIMARY KEY)"))
     TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
     app = FastAPI()
@@ -65,7 +67,14 @@ def client():
 
     app.dependency_overrides[get_db] = override_get_db
 
-    return TestClient(app), TestingSessionLocal
+    from unittest.mock import patch
+
+    with patch.object(
+        evolve_router,
+        "get_current_config",
+        return_value={"vector_store": {"config": {"collection_name": "mem0_memories"}}},
+    ):
+        yield TestClient(app), TestingSessionLocal
 
 
 def _get(client):

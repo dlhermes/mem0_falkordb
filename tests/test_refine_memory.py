@@ -378,6 +378,107 @@ class TestRefineAuth:
         assert resp.status_code == 401
 
 
+_NON_ADMIN = SimpleNamespace(role="user", id="user-9")
+
+
+class TestRefineAdminScope:
+    def _make_client(self, mocker, db, auth):
+        app = FastAPI()
+        app.include_router(refine_router.router)
+        app.dependency_overrides[require_auth] = lambda: auth
+        app.dependency_overrides[get_db] = lambda: db
+        return TestClient(app, raise_server_exceptions=False)
+
+    def _stmt_params(self, db):
+        stmt = db.execute.call_args.args[0]
+        return stmt.compile().params
+
+    def test_admin_get_candidates_without_user_id_returns_all_users(self, mocker):
+        db = MagicMock()
+        r1 = _candidate_row(user_id="u1", memory_ids=["m1"])
+        r2 = _candidate_row(user_id="u2", memory_ids=["m2"])
+        r1.id, r2.id = 1, 2
+        db.execute.return_value.scalars.return_value.all.return_value = [r1, r2]
+        client = self._make_client(mocker, db, _ADMIN)
+
+        resp = client.get("/memory/refine/candidates")
+
+        assert resp.status_code == 200
+        users = {c["user_id"] for c in resp.json()["candidates"]}
+        assert users == {"u1", "u2"}
+        assert "user_id" not in self._stmt_params(db)
+
+    def test_admin_get_candidates_with_user_id_filters(self, mocker):
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        client = self._make_client(mocker, db, _ADMIN)
+
+        resp = client.get("/memory/refine/candidates", params={"user_id": "u1"})
+
+        assert resp.status_code == 200
+        params = self._stmt_params(db)
+        assert any(v == "u1" for k, v in params.items() if "user_id" in k)
+
+    def test_non_admin_get_candidates_without_user_id_scopes_to_self(self, mocker):
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        client = self._make_client(mocker, db, _NON_ADMIN)
+
+        resp = client.get("/memory/refine/candidates")
+
+        assert resp.status_code == 200
+        params = self._stmt_params(db)
+        assert any(v == "user-9" for k, v in params.items() if "user_id" in k)
+
+    def test_admin_get_history_without_user_id_returns_all_users(self, mocker):
+        db = MagicMock()
+        r1 = _candidate_row(user_id="u1", status="applied", memory_ids=["m1"])
+        r2 = _candidate_row(user_id="u2", status="rolled_back", memory_ids=["m2"])
+        r1.id, r2.id = 1, 2
+        db.execute.return_value.scalars.return_value.all.return_value = [r1, r2]
+        client = self._make_client(mocker, db, _ADMIN)
+
+        resp = client.get("/memory/refine/history")
+
+        assert resp.status_code == 200
+        users = {c["user_id"] for c in resp.json()["history"]}
+        assert users == {"u1", "u2"}
+        assert "user_id" not in self._stmt_params(db)
+
+    def test_admin_post_candidates_generates_for_all_users(self, mocker):
+        db = MagicMock()
+        memory = MagicMock()
+        mocker.patch.object(refine_router, "get_memory_instance", return_value=memory)
+        mocker.patch.object(refine_router, "_discover_users", return_value=["u1", "u2"])
+        mocker.patch.object(
+            refine_router,
+            "discover_refine_candidates",
+            side_effect=lambda mem, sess, uid: [
+                {
+                    "id": 1,
+                    "user_id": uid,
+                    "memory_ids": [uid],
+                    "topic": None,
+                    "status": "proposed",
+                    "suggested_text": [],
+                    "refined_memory_id": None,
+                    "refined_memory_ids": [],
+                    "created_at": None,
+                    "updated_at": None,
+                }
+            ],
+        )
+        client = self._make_client(mocker, db, _ADMIN)
+
+        resp = client.post("/memory/refine/candidates")
+
+        assert resp.status_code == 200
+        users = {c["user_id"] for c in resp.json()["candidates"]}
+        assert users == {"u1", "u2"}
+        called = [c.args[2] for c in refine_router.discover_refine_candidates.call_args_list]
+        assert called == ["u1", "u2"]
+
+
 class TestRefineCronScript:
     def test_refine_candidates_script_discover_only(self, mocker, tmp_path, monkeypatch):
         config = {
