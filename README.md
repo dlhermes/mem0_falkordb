@@ -37,7 +37,7 @@ mem0 是一个为 AI Agent 提供持久记忆的开源库（存/搜/删 + LLM �
 |------|------|
 | 配置文件驱动 | `MEM0_CONFIG_PATH` 指向 config.json，纯配置部署，无需调 API |
 | 自动管理员 | 容器启动自动创建 `admin@mem0.dev` + 随机密码，日志可见 |
-| 92 个环境变量 | 连接池/超时/批量/并发/衰减/清理/反馈/深度路由全覆盖 |
+| 97 个环境变量 | 连接池/超时/批量/并发/衰减/清理/反馈/深度路由/类型权重全覆盖 |
 | 中文全链路 | 记忆提取/图实体/图关系/BM25 分词全汉化 |
 | Embedder 兼容 | VoyageAI base64 自动适配；pgvector 维度自动检测 |
 | Reranker | SiliconFlow 原生支持 + 分数阈值过滤 |
@@ -275,6 +275,38 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 
 每条记忆自动标注 `temporal`（PAST/PRESENT/FUTURE/TIMELESS），搜索可用 `filters: {"temporal": "FUTURE"}` 过滤；零额外 LLM 调用。
 
+#### 记忆类型（memory_type）
+
+每条记忆写入时自动打上 5 类类型标签——LLM 提取时顺带输出（零额外调用），缺失或非法时按文本关键词规则兜底：
+
+| 类型 | 中文 | 判断关键词（兜底） |
+|------|------|-------------------|
+| `FACTS` | 客观事实（默认） | 无法判断时输出 |
+| `PREFERENCES` | 偏好 | 喜欢 / 偏好 / 讨厌 / 想要 / 希望 / 爱用 |
+| `EXPERIENCES` | 经历（含踩坑） | 踩坑 / 报错 / 步骤 / 流程 / 配置 / 修复 |
+| `OBSERVATIONS` | 观察 | 观察到 / 发现 / 看到 / 注意到 |
+| `DECISIONS` | 决策 | 决定 / 拍板 / 定了 / 选型 / 采用 |
+
+- **写入分类**：提取时 LLM 输出 `metadata.memory_type`；缺失/非法值走关键词兜底（Phase 2.7，sync/async 双路径），都未命中 → `FACTS`
+- **存量回填**：`server/scripts/backfill_memory_types.py`（规则优先、`--use-llm` 可选、`PRUNE_DRY_RUN` 支持、幂等，重跑天然断点续跑）
+- **检索过滤**：`search` filters 支持 `{"type": "PREFERENCES"}`（别名，自动映射为 `memory_type`）或 `{"memory_type": "EXPERIENCES"}` 直接过滤
+- **类型权重**：排序时对综合分乘类型权重，默认 1.0 = 零行为变化；环境变量 `MEM0_TYPE_WEIGHT_FACTS` / `MEM0_TYPE_WEIGHT_PREFERENCES` / `MEM0_TYPE_WEIGHT_EXPERIENCES` / `MEM0_TYPE_WEIGHT_OBSERVATIONS` / `MEM0_TYPE_WEIGHT_DECISIONS`（非法值回退 1.0）
+- **Dashboard**：记忆页「全部类型」筛选下拉；分析面板「记忆构成」类型分布（端点 `GET /memories/types-distribution`）
+
+#### 递归精炼（记忆压缩）
+
+把 N 条碎片化记忆经 LLM 压缩合并为 1-3 条高层抽象，与未召回清单互补（未召回 = 发现，精炼 = 处理）。**铁律**：LLM 只产出「建议稿」，必须人工确认后才写入记忆库；原记忆 soft-superseded（打 `superseded_by` 标记）不物理删除；可随时回滚。
+
+- **候选发现**：按未召回清单（14 天未召回）取记忆文本，embedding cosine ≥ 0.75 贪婪聚类（组代表取均值向量），组内 ≥ 3 条才成为候选组
+- **API**：
+  - `POST /memory/refine/candidates?user_id=xxx` — 生成候选（注意 `user_id` 是 **query 参数**）
+  - `GET /memory/refine/candidates?user_id=xxx` — 候选列表（含主题/组内条数/建议稿）
+  - `POST /memory/refine/apply {"candidate_id": N}` — 人工确认应用（写记忆库 + 原记忆 soft-superseded；非 proposed 返回 409）
+  - `POST /memory/refine/rollback {"candidate_id": N}` — 回滚（删除新记忆 + 还原原记忆；非 applied 返回 409）
+  - `GET /memory/refine/history?user_id=xxx` — 已应用/已回滚记录
+- **cron 脚本**：`server/scripts/refine_candidates.py` — 只生成候选，**永不自动 apply**（`REFINE_DRY_RUN` 支持）
+- **Dashboard**：分析面板「记忆精炼」（候选建议稿预览 / 确认应用 / 历史回滚）
+
 ### 可观测与进化
 
 每次搜索自动落观测日志（查询词/召回数/平均分/耗时/是否零命中，数据存 `evolve_queries` 表），支撑下方进化循环与面板展示。
@@ -302,7 +334,7 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 | 记忆 | 列表/详情/历史演化查看、按用户/类型/时间筛选、单选与批量删除、语义结果页 |
 | 请求 | API 请求日志：方法/状态段/时间筛选、统计卡、详情抽屉 |
 | 实体 | 实体统计卡（用户/代理/运行分布）、类型筛选、详情抽屉 |
-| 分析 | 五个中文数据面板（搜索质量/反馈回路/热度健康/操作/召回漏斗） |
+| 分析 | 七个中文数据面板（记忆构成/搜索质量/反馈回路/热度健康/记忆精炼/操作/召回漏斗） |
 | API 密钥 | 创建/吊销/列表管理 |
 | 配置 | LLM / 嵌入 / 重排序 / 图数据存储独立配置（provider、model、API Key、Base URL）+ 检索参数（深度检索、车道、重排阈值）+ 提取指令编辑，**保存即热生效** |
 | 设置 | 深色/浅色主题切换、修改密码、实例信息（当前模型与存储后端）、**深度路由词汇管理**（minimal/standard/full 三级词汇增删，命中即路由，无需重启） |
@@ -329,13 +361,15 @@ score' = score × 0.5 ** (age_days / (half_life × lane_multiplier))
 
 ### Analytics 分析面板
 
-五个中文数据面板：
+七个中文数据面板：
 
 | 面板 | 内容 |
 |------|------|
+| 记忆构成 | memory_type 类型分布（客观事实/偏好/经历/观察/决策 + 未分类） |
 | 搜索质量 | 查询量/零命中率/平均分/延迟（7/30 天）+ 每日趋势 + 零命中 Top 查询 |
 | 反馈回路 | useful/useless/correction 分布 + 被纠正最多记忆 |
-| 热度健康 | 热度分布 + 高频记忆 + 未召回清单（可点「清理/保留」决策）+ 提权记录 |
+| 热度健康 | 热度分布 + 高频记忆 + 未召回清单（可点「清理/保留」决策 /「生成精炼候选」）+ 提权记录 |
+| 记忆精炼 | 精炼候选建议稿预览 / 确认应用 / 历史回滚 |
 | 操作 | 请求量/延迟/成功率 |
 | 召回漏斗 | 搜索各阶段命中数与耗时（RECALL trace） |
 
@@ -411,9 +445,14 @@ MEM0_TEMPORAL_WINDOW_DAYS=7           # 时间意图「最近」默认窗口（�
 MEM0_TEMPORAL_HALFLIFE_HOURS=168      # 时间衰减半衰期（小时，7 天）
 MEM0_TEMPORAL_TOP_K=20                # 时间召回条数上限
 MEM0_TEMPORAL_FORCE_FULL=true         # 时间意图查询强制 full 档（默认开）
+MEM0_TYPE_WEIGHT_PREFERENCES=1.0      # 类型排序权重（默认 1.0 = 零行为变化）
+MEM0_TYPE_WEIGHT_FACTS=1.0            # FACTS 类型排序权重
+MEM0_TYPE_WEIGHT_EXPERIENCES=1.0      # EXPERIENCES 类型排序权重
+MEM0_TYPE_WEIGHT_OBSERVATIONS=1.0     # OBSERVATIONS 类型排序权重
+MEM0_TYPE_WEIGHT_DECISIONS=1.0        # DECISIONS 类型排序权重
 ```
 
-全部 92 个变量的完整清单与性能调优说明见 [server/README.md](server/README.md)。
+全部 97 个变量的完整清单与性能调优说明见 [server/README.md](server/README.md)。
 
 ---
 
@@ -430,6 +469,7 @@ MEM0_TEMPORAL_FORCE_FULL=true         # 时间意图查询强制 full 档（默�
 | mem0-dedup-memories | 05:00 | 语义去重 |
 | mem0-evolve-cycle | 06:00 | 进化循环（高频提权/零命中/未召回清单） |
 | mem0-prune-evolve-orphans | 06:20 | evolve 孤儿清理（记忆本体已删的 salience/feedback/adjustments 残留） |
+| mem0-refine-candidates | 06:40 | 递归精炼候选生成（只发现，不自动应用） |
 
 所有脚本支持 dry-run 环境变量（`PRUNE_DRY_RUN=true` / `CONSOLIDATION_DRY_RUN=true` / `EVOLVE_DRY_RUN=true`），watchdog 模式：无动作静默，有动作才输出。
 

@@ -192,14 +192,43 @@ cd /data/mem0_falkordb/server && docker compose up -d --force-recreate mem0
 
 记忆系统支持**显式反馈闭环**：对话层捕获用户纠正信号后，通过 `POST /evolve/feedback` 直接调整对应记忆的热度（salience）分（useful +0.1 / useless -0.15 / correction -0.05，clamp 到 [0.05, 1.0]），只改热度不改记忆内容。反馈可审计（evolve_feedback / evolve_salience_adjustments 落库），误报可逆。
 
+### 记忆类型（memory_type）
+
+每条记忆写入时自动打上 5 类类型标签——LLM 提取时顺带输出（零额外调用），缺失或非法时按文本关键词规则兜底（Phase 2.7，sync/async 双路径），都未命中 → `FACTS`：
+
+| 类型 | 中文 | 判断关键词（兜底） |
+|------|------|-------------------|
+| `FACTS` | 客观事实（默认） | 无法判断时输出 |
+| `PREFERENCES` | 偏好 | 喜欢 / 偏好 / 讨厌 / 想要 / 希望 / 爱用 |
+| `EXPERIENCES` | 经历（含踩坑） | 踩坑 / 报错 / 步骤 / 流程 / 配置 / 修复 |
+| `OBSERVATIONS` | 观察 | 观察到 / 发现 / 看到 / 注意到 |
+| `DECISIONS` | 决策 | 决定 / 拍板 / 定了 / 选型 / 采用 |
+
+- **存量回填**：`python3 scripts/backfill_memory_types.py [--use-llm]`（规则优先，`--use-llm` 对每条待回填记忆做一次 LLM 分类、失败回退规则；`PRUNE_DRY_RUN=true` 只报告不写库；幂等，只处理缺失或非法 memory_type 的记忆）
+- **检索过滤**：`/search` filters 支持 `{"type": "PREFERENCES"}`（别名，自动映射为 `memory_type`）或 `{"memory_type": "EXPERIENCES"}` 直接过滤
+- **类型权重**：排序时对综合分乘类型权重（默认 1.0 = 零行为变化），env 见下方「记忆类型权重」
+
+### 递归精炼（记忆压缩）
+
+把 N 条碎片化记忆经 LLM 压缩合并为 1-3 条高层抽象，与未召回清单互补（未召回 = 发现，精炼 = 处理）。**铁律**：LLM 只产出「建议稿」，必须人工确认后才写入记忆库；原记忆 soft-superseded（打 `superseded_by` / `superseded_at` 标记）不物理删除；可随时回滚。
+
+- **候选发现**：按未召回清单（14 天未召回）取记忆文本，embedding cosine ≥ 0.75 贪婪聚类（组代表取均值向量），组内 ≥ 3 条才成为候选组
+- **API**：
+  - `POST /memory/refine/candidates?user_id=xxx` — 生成候选（`user_id` 是 **query 参数**）
+  - `GET /memory/refine/candidates?user_id=xxx` — 候选列表（含 status/topic/memory_ids/suggested_text）
+  - `POST /memory/refine/apply {"candidate_id": N}` — 人工确认应用（逐条建议稿 `infer=False` 写库 + 原记忆 soft-superseded；非 proposed 返回 409，可重试）
+  - `POST /memory/refine/rollback {"candidate_id": N}` — 回滚（删除新记忆 + 还原原记忆 superseded 标记；非 applied 返回 409）
+  - `GET /memory/refine/history?user_id=xxx` — 已应用/已回滚记录（含建议稿、时间、新记忆 id）
+- **cron 脚本**：`python3 scripts/refine_candidates.py` — 只生成候选写候选表，**永不自动 apply**（`REFINE_DRY_RUN=true` 只报告不写库）
+
 ### Dashboard 功能
 
 登录后可访问：
 
 - **Requests** — API 调用审计日志
-- **Memories** — 浏览和搜索记忆
+- **Memories** — 浏览和搜索记忆，支持按记忆类型（客观事实/偏好/经历/观察/决策）筛选
 - **Entities** — 用户/Agent/会话列表及计数
-- **Analytics** — 五个真实数据面板（中文）：搜索质量 / 反馈回路 / 热度健康 / 操作 / 召回漏斗；未召回清单可直接点「清理/保留」决策
+- **Analytics** — 七个真实数据面板（中文）：记忆构成 / 搜索质量 / 反馈回路 / 热度健康 / 记忆精炼 / 操作 / 召回漏斗；未召回清单可直接点「清理/保留」决策或「生成精炼候选」，记忆精炼面板支持候选建议稿预览 / 确认应用 / 历史回滚
 - **API Keys** — 创建和管理 API Key
 - **Configuration** — 查看当前 Provider 配置
 - **Settings** — 修改密码和个人信息
@@ -329,6 +358,24 @@ cd /data/mem0_falkordb/server && docker compose up -d --force-recreate mem0
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `MEM0_EVOLVE_RANK_WEIGHT` | `0` | 热度排序加成权重（>0 生效，建议 0.1-0.3 起步） |
+
+### 记忆类型权重
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEM0_TYPE_WEIGHT_FACTS` | `1.0` | FACTS 类型排序乘数；`1.0` = 零行为变化 |
+| `MEM0_TYPE_WEIGHT_PREFERENCES` | `1.0` | PREFERENCES 类型排序乘数 |
+| `MEM0_TYPE_WEIGHT_EXPERIENCES` | `1.0` | EXPERIENCES 类型排序乘数 |
+| `MEM0_TYPE_WEIGHT_OBSERVATIONS` | `1.0` | OBSERVATIONS 类型排序乘数 |
+| `MEM0_TYPE_WEIGHT_DECISIONS` | `1.0` | DECISIONS 类型排序乘数 |
+
+任一权重 ≠ 1.0 时对候选综合分乘该记忆的 memory_type 权重（缺失 memory_type 的记忆恒为 1.0）；全部默认 1.0 时不启用，排序与旧逻辑完全一致。非法值（非数字）回退 1.0。
+
+### 递归精炼
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `REFINE_DRY_RUN` | `false` | `true` 时 refine_candidates.py 只报告不写候选表 |
 
 ### 示例 .env 配置
 
