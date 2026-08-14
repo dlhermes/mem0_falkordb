@@ -758,7 +758,7 @@ def _build_llm(llm_config):
     if not llm_config.fallbacks:
         return primary
     fallbacks = [LlmFactory.create(fb.provider, fb.config) for fb in llm_config.fallbacks]
-    return FallbackLLM(primary, fallbacks)
+    return FallbackLLM(primary, fallbacks, layer_timeout=llm_config.layer_timeout)
 
 
 class Memory(MemoryBase):

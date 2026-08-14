@@ -21,7 +21,7 @@ class FallbackLLM(LLMBase):
     internally by the SDK.
     """
 
-    def __init__(self, primary, fallbacks, layer_timeout=40.0):
+    def __init__(self, primary, fallbacks, layer_timeout=60.0):
         self._llms = [primary, *fallbacks]
         self.layer_timeout = layer_timeout
         for llm in self._llms:

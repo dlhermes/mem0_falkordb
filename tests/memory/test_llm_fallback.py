@@ -65,7 +65,7 @@ class ClientfulLLM(MockLLM):
         self.client = FakeClient()
 
 
-def _make(primary, *fallbacks, layer_timeout=40.0):
+def _make(primary, *fallbacks, layer_timeout=60.0):
     return FallbackLLM(primary, list(fallbacks), layer_timeout=layer_timeout)
 
 
@@ -88,7 +88,7 @@ def test_injects_timeout_only():
 
     fallback.generate_response([{"role": "user", "content": "hi"}])
 
-    assert primary.call_kwargs[0]["timeout"] == 40.0
+    assert primary.call_kwargs[0]["timeout"] == 60.0
     assert "max_retries" not in primary.call_kwargs[0]
 
 
@@ -130,7 +130,25 @@ def test_init_skips_llm_without_client():
 
     fallback = _make(primary, fb1)
 
-    assert fallback.layer_timeout == 40.0
+    assert fallback.layer_timeout == 60.0
+
+
+def test_default_layer_timeout_is_60():
+    primary = MockLLM(result="ok")
+
+    fallback = FallbackLLM(primary, [])
+
+    assert fallback.layer_timeout == 60.0
+
+
+def test_custom_layer_timeout_is_used():
+    primary = MockLLM(result="ok")
+
+    fallback = FallbackLLM(primary, [], layer_timeout=30.0)
+    fallback.generate_response([{"role": "user", "content": "hi"}])
+
+    assert fallback.layer_timeout == 30.0
+    assert primary.call_kwargs[0]["timeout"] == 30.0
 
 
 def test_primary_raises_fallback1_used():
@@ -231,6 +249,22 @@ def test_build_llm_returns_fallback_when_fallbacks_configured(monkeypatch):
     assert isinstance(llm, FallbackLLM)
     assert len(created) == 3
     assert len(llm._llms) == 3
+
+
+def test_build_llm_wires_layer_timeout(monkeypatch):
+    created = []
+    _patch_factory(monkeypatch, created)
+    cfg = LlmConfig(
+        provider="openai",
+        config={"model": "gpt-4o"},
+        fallbacks=[LlmConfig(provider="anthropic", config={"model": "claude-3-5"})],
+        layer_timeout=45.0,
+    )
+
+    llm = memory_main._build_llm(cfg)
+
+    assert isinstance(llm, FallbackLLM)
+    assert llm.layer_timeout == 45.0
 
 
 def test_build_llm_returns_primary_when_no_fallbacks(monkeypatch):

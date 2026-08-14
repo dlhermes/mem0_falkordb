@@ -220,7 +220,12 @@ DEFAULT_CONFIG = {
             "embedding_model_dims": int(_embedding_dims) if _embedding_dims is not None else None,
         },
     },
-    "llm": {"provider": "openai", "config": LLM_CONFIG, "fallbacks": _llm_fallbacks},
+    "llm": {
+        "provider": "openai",
+        "config": LLM_CONFIG,
+        "fallbacks": _llm_fallbacks,
+        "layer_timeout": float(os.environ.get("MEM0_LLM_FALLBACK_TIMEOUT", "60")),
+    },
     "embedder": {"provider": "openai", "config": EMBEDDER_CONFIG},
     "history_db_path": HISTORY_DB_PATH,
     "graph_store": {
