@@ -45,6 +45,7 @@ from mem0.graphs.tools import (
     RELATIONS_TOOL,
 )
 from mem0.graphs.utils import EXTRACT_RELATIONS_PROMPT, get_invalidate_messages
+from mem0.llms.fallback import FallbackLLM
 from mem0.utils.factory import EmbedderFactory, LlmFactory
 
 logger = logging.getLogger(__name__)
@@ -205,6 +206,19 @@ class _FalkorDBGraphWrapper:
         self._graph_cache.clear()
 
 
+def _build_llm(provider, llm_config):
+    """Build the graph entity-extraction LLM with optional fallback layers.
+
+    语义与 mem0/memory/main.py._build_llm 保持一致（图链路无法直接 import main，避免循环依赖）：
+    fallbacks 数量自适应——N 个 fallback 即为 N 层兜底，0 个时仅返回主层 LLM。
+    """
+    primary = LlmFactory.create(provider, llm_config.config)
+    if not llm_config.fallbacks:
+        return primary
+    fallbacks = [LlmFactory.create(fb.provider, fb.config) for fb in llm_config.fallbacks]
+    return FallbackLLM(primary, fallbacks, layer_timeout=llm_config.layer_timeout)
+
+
 class MemoryGraph:
     def __init__(self, config):
         self.config = config
@@ -248,17 +262,14 @@ class MemoryGraph:
         ):
             self.llm_provider = self.config.graph_store.llm.provider
 
-        # Get LLM config with proper null checks
+        # Get LLM config with proper null checks; use the full LlmConfig object
+        # (not the inner .config dict) so fallbacks/layer_timeout survive.
         llm_config = None
-        if (
-            self.config.graph_store
-            and self.config.graph_store.llm
-            and hasattr(self.config.graph_store.llm, "config")
-        ):
-            llm_config = self.config.graph_store.llm.config
-        elif hasattr(self.config.llm, "config"):
-            llm_config = self.config.llm.config
-        self.llm = LlmFactory.create(self.llm_provider, llm_config)
+        if self.config.graph_store and self.config.graph_store.llm:
+            llm_config = self.config.graph_store.llm
+        elif self.config.llm:
+            llm_config = self.config.llm
+        self.llm = _build_llm(self.llm_provider, llm_config)
 
     @property
     def threshold(self):
